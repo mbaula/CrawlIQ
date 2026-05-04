@@ -49,3 +49,4 @@ docker-compose.override.yml
 # personal notes
 article.md
 plan.md
+/docs

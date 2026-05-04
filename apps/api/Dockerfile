@@ -33,8 +33,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
         --timeout 120 \
         -r requirements.txt
 
+COPY alembic.ini ./
+COPY alembic ./alembic
 COPY config.py main.py .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000"]
