@@ -1,9 +1,19 @@
 FROM node:20-alpine AS deps
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache ca-certificates libc6-compat
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install
+
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+ARG NPM_STRICT_SSL=true
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+
+RUN npm config set registry "${NPM_CONFIG_REGISTRY}" \
+    && npm config set fetch-retries 10 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && if [ "${NPM_STRICT_SSL}" = "false" ]; then npm config set strict-ssl false; fi \
+    && npm install
 
 FROM node:20-alpine AS builder
 WORKDIR /app

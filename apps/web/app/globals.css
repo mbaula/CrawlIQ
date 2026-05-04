@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper-rgb: 244 241 234;
+  --ink-rgb: 26 25 23;
+  --muted-rgb: 92 90 86;
+  --rule-rgb: 212 207 195;
+  --accent-rgb: 107 75 62;
+}
+
+.dark {
+  --paper-rgb: 17 16 15;
+  --ink-rgb: 232 230 225;
+  --muted-rgb: 156 152 144;
+  --rule-rgb: 42 40 38;
+  --accent-rgb: 196 164 132;
+}
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+  body {
+    @apply min-h-screen bg-paper text-ink antialiased transition-colors duration-200;
+  }
+}

@@ -29,6 +29,9 @@ services:
   api:
     build:
       context: ./apps/api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_EXTRA_TRUSTED_HOST: ${PIP_EXTRA_TRUSTED_HOST:-}
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
@@ -59,6 +62,9 @@ services:
   worker:
     build:
       context: ./apps/worker
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_EXTRA_TRUSTED_HOST: ${PIP_EXTRA_TRUSTED_HOST:-}
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://crawliq:crawliq@postgres:5432/crawliq}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -79,6 +85,8 @@ services:
       context: ./apps/web
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org/}
+        NPM_STRICT_SSL: ${NPM_STRICT_SSL:-true}
     ports:
       - "${WEB_PORT:-3000}:3000"
     environment:
@@ -87,5 +95,27 @@ services:
       api:
         condition: service_healthy
 
+  # Local UI dev without Windows npm/OpenSSL (ERR_SSL_CIPHER_OPERATION_FAILED).
+  # Linux installs deps + correct SWC; node_modules live in a named volume.
+  web-dev:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    ports:
+      - "${WEB_DEV_PORT:-3000}:3000"
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./apps/web:/app
+      - web_dev_node_modules:/app/node_modules
+    command:
+      [
+        "sh",
+        "-c",
+        "npm install && exec npm run dev -- -H 0.0.0.0 -p 3000",
+      ]
+
 volumes:
   postgres_data:
+  web_dev_node_modules:
