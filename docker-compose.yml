@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: crawliq
+      POSTGRES_PASSWORD: crawliq
+      POSTGRES_DB: crawliq
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crawliq -d crawliq"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: ./apps/api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://crawliq:crawliq@postgres:5432/crawliq}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CRAWL_DEFAULT_MAX_PAGES: ${CRAWL_DEFAULT_MAX_PAGES:-100}
+      CRAWL_DEFAULT_MAX_DEPTH: ${CRAWL_DEFAULT_MAX_DEPTH:-2}
+      CRAWL_REQUEST_TIMEOUT_SECONDS: ${CRAWL_REQUEST_TIMEOUT_SECONDS:-10}
+      CRAWL_DOMAIN_DELAY_SECONDS: ${CRAWL_DOMAIN_DELAY_SECONDS:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build:
+      context: ./apps/worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://crawliq:crawliq@postgres:5432/crawliq}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CRAWL_DEFAULT_MAX_PAGES: ${CRAWL_DEFAULT_MAX_PAGES:-100}
+      CRAWL_DEFAULT_MAX_DEPTH: ${CRAWL_DEFAULT_MAX_DEPTH:-2}
+      CRAWL_REQUEST_TIMEOUT_SECONDS: ${CRAWL_REQUEST_TIMEOUT_SECONDS:-10}
+      CRAWL_DOMAIN_DELAY_SECONDS: ${CRAWL_DOMAIN_DELAY_SECONDS:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
