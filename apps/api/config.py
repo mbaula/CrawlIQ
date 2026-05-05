@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Monorepo layout: repo-root `.env` (``CrawlIQ/.env``) and optional ``apps/api/.env``.
@@ -30,6 +31,10 @@ class Settings(BaseSettings):
     crawl_default_max_depth: int = 2
     crawl_request_timeout_seconds: int = 10
     crawl_domain_delay_seconds: int = 1
+    # Empty string → built-in default in ``fetch_html`` (see ``DEFAULT_HTTP_USER_AGENT``).
+    crawl_http_user_agent: str = ""
+    crawl_max_redirects: int = Field(default=10, ge=1, le=50)
+    crawl_max_response_bytes: int = Field(default=5_242_880, ge=1, le=50_000_000)  # ~5 MiB default
 
 
 def get_settings() -> Settings:
