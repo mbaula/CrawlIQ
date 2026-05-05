@@ -1,4 +1,6 @@
 yarl==1.18.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
 httpx==0.28.1
 fastapi==0.115.6
 uvicorn[standard]==0.32.1

@@ -1,4 +1,4 @@
-"""Allow crawl_jobs.status = queued (issue #7 API).
+"""Extend ``crawl_jobs.status`` CHECK constraint to include ``queued`` (API creates jobs in this state).
 
 Revision ID: 0002_queued_status
 Revises: 0001_initial

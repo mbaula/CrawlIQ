@@ -1,4 +1,4 @@
-"""HTML fetcher (Issue 10) with ``httpx.MockTransport``."""
+"""HTML fetch: ``httpx.MockTransport`` for deterministic HTTP responses."""
 
 import httpx
 

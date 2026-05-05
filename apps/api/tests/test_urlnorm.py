@@ -1,4 +1,4 @@
-"""URL canonicalization (Issue 9)."""
+"""URL canonicalization: ``normalize_url`` / ``normalize_seed_url``."""
 
 import pytest
 

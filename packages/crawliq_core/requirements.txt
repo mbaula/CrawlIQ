@@ -1,0 +1,4 @@
+yarl>=1.18
+beautifulsoup4>=4.12
+lxml>=5.0
+pydantic>=2.0
