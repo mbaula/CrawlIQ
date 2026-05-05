@@ -10,13 +10,15 @@ from sqlalchemy import create_engine, pool
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from config import Settings  # noqa: E402
+from db.url import sync_engine_url  # noqa: E402
+from models import Base  # noqa: E402, F401 — domain models registered on Base.metadata
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def _database_url() -> str:
@@ -25,9 +27,7 @@ def _database_url() -> str:
         raise RuntimeError(
             "DATABASE_URL is not set. Set it to run migrations (e.g. postgresql://...)."
         )
-    if url.startswith("postgresql://") and "+psycopg" not in url:
-        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    return url
+    return sync_engine_url(url)
 
 
 def run_migrations_offline() -> None:

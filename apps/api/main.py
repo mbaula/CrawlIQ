@@ -1,8 +1,12 @@
 from functools import lru_cache
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from config import Settings, get_settings
+from db.session import get_engine
 
 app = FastAPI(title="CrawlIQ API")
 
@@ -19,6 +23,19 @@ def settings_dep() -> Settings:
 @app.get("/health")
 def health(settings: Settings = Depends(settings_dep)) -> dict[str, str]:
     return {"status": "ok", "service": settings.service_name}
+
+
+@app.get("/ready")
+def ready(settings: Settings = Depends(settings_dep)) -> dict[str, str]:
+    """Verifies Postgres connectivity (Compose healthcheck can keep using ``/health``)."""
+    if not (settings.database_url or "").strip():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    try:
+        with Session(bind=get_engine()) as session:
+            session.execute(text("SELECT 1"))
+    except (SQLAlchemyError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=f"database: {exc}") from exc
+    return {"database": "ok"}
 
 
 @app.get("/")

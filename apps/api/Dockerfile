@@ -35,6 +35,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
 
 COPY alembic.ini ./
 COPY alembic ./alembic
+COPY db ./db
+COPY models ./models
 COPY config.py main.py .
 
 EXPOSE 8000
