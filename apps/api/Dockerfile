@@ -37,6 +37,9 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY db ./db
 COPY models ./models
+COPY routers ./routers
+COPY schemas ./schemas
+COPY services ./services
 COPY config.py main.py .
 
 EXPOSE 8000

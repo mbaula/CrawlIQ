@@ -27,7 +27,7 @@ class CrawlJob(Base):
     __tablename__ = "crawl_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'running', 'completed', 'failed', 'cancelled')",
+            "status IN ('queued', 'pending', 'running', 'completed', 'failed', 'cancelled')",
             name="ck_crawl_jobs_status",
         ),
     )

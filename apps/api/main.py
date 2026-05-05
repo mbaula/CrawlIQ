@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 
 from config import Settings, get_settings
 from db.session import get_engine
+from routers.crawl_jobs import router as crawl_jobs_router
 
 app = FastAPI(title="CrawlIQ API")
+app.include_router(crawl_jobs_router)
 
 
 @lru_cache
