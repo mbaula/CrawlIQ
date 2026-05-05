@@ -125,6 +125,9 @@ class PageLink(Base):
         nullable=True,
     )
     depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_crawl_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"),
+    )
 
     crawl_job: Mapped[CrawlJob] = relationship(back_populates="page_links")
     source_page: Mapped[Page] = relationship(

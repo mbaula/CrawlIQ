@@ -1,12 +1,17 @@
 # Pin Debian Bookworm: `python:3.12-slim` can track testing (e.g. trixie) and hit
 # transient `Hash Sum mismatch` on deb.debian.org during `apt-get update`.
+# Build from repo root: ``docker compose build api`` (context ``.``, this file ``apps/api/Dockerfile``).
 FROM python:3.12-slim-bookworm
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DEFAULT_TIMEOUT=120
+    PIP_DEFAULT_TIMEOUT=120 \
+    PYTHONPATH=/packages
 
 WORKDIR /app
+
+# Shared crawl package (import as ``crawliq_core``).
+COPY packages /packages
 
 # Fresh CA bundle + current pip (fewer TLS / middlebox issues on some networks).
 RUN rm -rf /var/lib/apt/lists/* \
@@ -18,7 +23,7 @@ RUN rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY apps/api/requirements.txt .
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG PIP_EXTRA_TRUSTED_HOST=
@@ -33,14 +38,14 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
         --timeout 120 \
         -r requirements.txt
 
-COPY alembic.ini ./
-COPY alembic ./alembic
-COPY db ./db
-COPY models ./models
-COPY routers ./routers
-COPY schemas ./schemas
-COPY services ./services
-COPY config.py main.py .
+COPY apps/api/alembic.ini ./
+COPY apps/api/alembic ./alembic
+COPY apps/api/db ./db
+COPY apps/api/models ./models
+COPY apps/api/routers ./routers
+COPY apps/api/schemas ./schemas
+COPY apps/api/services ./services
+COPY apps/api/config.py apps/api/main.py .
 
 EXPOSE 8000
 
