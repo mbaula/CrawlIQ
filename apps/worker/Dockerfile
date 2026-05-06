@@ -30,6 +30,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
         --timeout 120 \
         -r requirements.txt
 
+COPY jobs.py .
 COPY main.py .
 
 CMD ["python", "main.py"]
