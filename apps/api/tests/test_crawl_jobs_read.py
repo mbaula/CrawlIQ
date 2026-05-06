@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from db.session import get_db
 from main import app
-from models.domain import CrawlError, CrawlJob, Page
+from models.domain import CrawlError, CrawlJob, Page, PageLink
 
 
 @pytest.fixture
@@ -83,10 +83,26 @@ def test_get_crawl_job_200(client_mock_read_db: tuple[TestClient, MagicMock]) ->
     client, mock_session = client_mock_read_db
     job = _sample_job()
     mock_session.get.return_value = job
+    mock_session.scalar.return_value = 4
     response = client.get("/crawl-jobs/1")
     assert response.status_code == 200, response.text
-    assert response.json()["id"] == 1
-    assert response.json()["pages_crawled"] == 0
+    body = response.json()
+    assert body["id"] == 1
+    assert body["pages_crawled"] == 0
+    assert body["pages_discovered"] == 4
+    assert body["crawl_progress"] == 0.0
+
+
+def test_get_crawl_job_crawl_progress(client_mock_read_db: tuple[TestClient, MagicMock]) -> None:
+    client, mock_session = client_mock_read_db
+    job = _sample_job()
+    job.pages_crawled = 3
+    job.max_pages = 10
+    mock_session.get.return_value = job
+    mock_session.scalar.return_value = 0
+    response = client.get("/crawl-jobs/1")
+    assert response.status_code == 200, response.text
+    assert response.json()["crawl_progress"] == 0.3
 
 
 def test_list_pages_job_missing_404(client_mock_read_db: tuple[TestClient, MagicMock]) -> None:
@@ -122,10 +138,18 @@ def test_list_errors_empty(client_mock_read_db: tuple[TestClient, MagicMock]) ->
 
 
 @pytest.mark.integration
-def test_read_endpoints_postgres(test_database_url: str) -> None:
+def test_read_endpoints_postgres(
+    test_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from sqlalchemy import create_engine
 
     from db.url import sync_engine_url
+
+    monkeypatch.setattr(
+        "routers.crawl_jobs.enqueue_process_crawl_job",
+        lambda _jid: "rq-test",
+    )
 
     engine = create_engine(sync_engine_url(test_database_url), pool_pre_ping=True)
     TestSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -159,8 +183,11 @@ def test_read_endpoints_postgres(test_database_url: str) -> None:
 
             one = test_client.get(f"/crawl-jobs/{job_id}")
             assert one.status_code == 200
-            assert one.json()["seed_url"] == "https://read-test.example/"
-            assert one.json()["normalized_seed_url"].startswith("http")
+            one_body = one.json()
+            assert one_body["seed_url"] == "https://read-test.example/"
+            assert one_body["normalized_seed_url"].startswith("http")
+            assert one_body["pages_discovered"] == 0
+            assert one_body["crawl_progress"] == 0.0
 
             pages = test_client.get(f"/crawl-jobs/{job_id}/pages")
             assert pages.status_code == 200
@@ -194,10 +221,33 @@ def test_read_endpoints_postgres(test_database_url: str) -> None:
                     error_message="oops",
                 )
                 session.add(page)
+                session.flush()
+                session.add(
+                    PageLink(
+                        crawl_job_id=job_id,
+                        source_page_id=page.id,
+                        target_normalized_url="https://read-test.example/a",
+                        depth=1,
+                        is_crawl_eligible=True,
+                    ),
+                )
+                session.add(
+                    PageLink(
+                        crawl_job_id=job_id,
+                        source_page_id=page.id,
+                        target_normalized_url="https://read-test.example/b",
+                        depth=1,
+                        is_crawl_eligible=True,
+                    ),
+                )
                 session.add(err)
                 session.commit()
             finally:
                 session.close()
+
+            detail2 = test_client.get(f"/crawl-jobs/{job_id}")
+            assert detail2.status_code == 200
+            assert detail2.json()["pages_discovered"] == 2
 
             pages2 = test_client.get(f"/crawl-jobs/{job_id}/pages")
             assert pages2.status_code == 200

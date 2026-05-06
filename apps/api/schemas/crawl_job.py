@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class CrawlJobRead(BaseModel):
-    """Full job row for GET list/detail."""
+    """Job row for GET list (no extra aggregates)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -22,6 +22,21 @@ class CrawlJobRead(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     error_message: str | None
+
+
+class CrawlJobDetailRead(CrawlJobRead):
+    """GET ``/crawl-jobs/{id}``: adds dashboard-oriented progress fields."""
+
+    pages_discovered: int = Field(
+        0,
+        description="Distinct crawl-eligible link targets seen in parsed HTML for this job.",
+    )
+    crawl_progress: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description="``pages_crawled / max_pages``, capped at 1.",
+    )
 
 
 class PageRead(BaseModel):

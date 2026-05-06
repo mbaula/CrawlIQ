@@ -2,15 +2,16 @@ from typing import Annotated
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from db.session import get_db
-from models.domain import CrawlError, CrawlJob, Page
+from models.domain import CrawlError, CrawlJob, Page, PageLink
 from schemas.crawl_job import (
     CrawlErrorRead,
     CrawlJobCreateRequest,
     CrawlJobCreateResponse,
+    CrawlJobDetailRead,
     CrawlJobRead,
     PageRead,
 )
@@ -65,12 +66,24 @@ def list_crawl_jobs(
     return list(db.scalars(stmt).all())
 
 
-@router.get("/{job_id}", response_model=CrawlJobRead)
-def get_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobRead:
+@router.get("/{job_id}", response_model=CrawlJobDetailRead)
+def get_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobDetailRead:
     job = db.get(CrawlJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="crawl job not found")
-    return job
+    discovered = db.scalar(
+        select(func.count(distinct(PageLink.target_normalized_url))).where(
+            PageLink.crawl_job_id == job_id,
+            PageLink.is_crawl_eligible.is_(True),
+        ),
+    )
+    pages_discovered = int(discovered or 0)
+    denom = float(job.max_pages) if job.max_pages > 0 else 1.0
+    crawl_progress = min(1.0, float(job.pages_crawled) / denom)
+    payload = CrawlJobRead.model_validate(job).model_dump()
+    payload["pages_discovered"] = pages_discovered
+    payload["crawl_progress"] = crawl_progress
+    return CrawlJobDetailRead(**payload)
 
 
 @router.get("/{job_id}/pages", response_model=list[PageRead])
