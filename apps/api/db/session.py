@@ -42,6 +42,13 @@ def get_engine():
     return _engine
 
 
+def get_session_factory() -> sessionmaker[Session]:
+    """Return the process-wide ``sessionmaker`` (lazy-initialized)."""
+    _ensure_engine()
+    assert _session_factory is not None
+    return _session_factory
+
+
 def get_db() -> Generator[Session, None, None]:
     """FastAPI dependency: one session per request (call ``commit()`` in routes after writes)."""
     _ensure_engine()

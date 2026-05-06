@@ -1,5 +1,6 @@
 from typing import Annotated
 
+import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from schemas.crawl_job import (
     CrawlJobRead,
     PageRead,
 )
+from services.queue import enqueue_process_crawl_job
 from services.urlnorm import normalize_seed_url
 
 router = APIRouter(prefix="/crawl-jobs", tags=["crawl-jobs"])
@@ -40,7 +42,12 @@ def create_crawl_job(
     db.add(job)
     db.commit()
     db.refresh(job)
-    return CrawlJobCreateResponse.model_validate(job)
+    enqueued = True
+    try:
+        enqueue_process_crawl_job(job.id)
+    except (OSError, redis.exceptions.RedisError):
+        enqueued = False
+    return CrawlJobCreateResponse.model_validate(job).model_copy(update={"enqueued": enqueued})
 
 
 @router.get("", response_model=list[CrawlJobRead])

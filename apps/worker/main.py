@@ -28,7 +28,9 @@ def main() -> None:
 
     queues = [Queue("default", connection=conn)]
     worker = Worker(queues, connection=conn)
-    log.info("Listening on queue 'default'; registered jobs include jobs.ping_job")
+    log.info(
+        "Listening on queue 'default'; jobs: jobs.ping_job, jobs.process_crawl_job",
+    )
     worker.work(with_scheduler=False)
 
 

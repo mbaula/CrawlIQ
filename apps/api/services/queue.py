@@ -9,6 +9,7 @@ from rq import Queue
 from config import get_settings
 
 _PING_JOB = "jobs.ping_job"
+_PROCESS_CRAWL_JOB = "jobs.process_crawl_job"
 
 
 def _redis_url() -> str:
@@ -31,4 +32,11 @@ def enqueue_ping_job(message: str = "ping") -> str:
     """
     q = get_default_queue()
     job = q.enqueue(_PING_JOB, message)
+    return job.get_id()
+
+
+def enqueue_process_crawl_job(crawl_job_id: int) -> str:
+    """Enqueue ``jobs.process_crawl_job`` for the given crawl job primary key."""
+    q = get_default_queue()
+    job = q.enqueue(_PROCESS_CRAWL_JOB, crawl_job_id)
     return job.get_id()

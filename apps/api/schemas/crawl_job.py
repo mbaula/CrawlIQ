@@ -75,3 +75,4 @@ class CrawlJobCreateResponse(BaseModel):
     max_depth: int
     same_domain_only: bool
     created_at: datetime
+    enqueued: bool = True

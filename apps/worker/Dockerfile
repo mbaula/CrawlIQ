@@ -2,7 +2,8 @@ FROM python:3.12-slim-bookworm
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DEFAULT_TIMEOUT=120
+    PIP_DEFAULT_TIMEOUT=120 \
+    PYTHONPATH=/packages
 
 WORKDIR /app
 
@@ -15,7 +16,9 @@ RUN rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY packages /packages
+
+COPY apps/api/requirements.txt ./requirements-api.txt
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG PIP_EXTRA_TRUSTED_HOST=
@@ -28,9 +31,14 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
         $( [ -z "${PIP_EXTRA_TRUSTED_HOST}" ] || echo "--trusted-host ${PIP_EXTRA_TRUSTED_HOST}" ) \
         --retries 10 \
         --timeout 120 \
-        -r requirements.txt
+        -r requirements-api.txt
 
-COPY jobs.py .
-COPY main.py .
+COPY apps/api/db ./db
+COPY apps/api/models ./models
+COPY apps/api/schemas ./schemas
+COPY apps/api/services ./services
+COPY apps/api/config.py ./config.py
+COPY apps/worker/jobs.py ./jobs.py
+COPY apps/worker/main.py ./main.py
 
 CMD ["python", "main.py"]

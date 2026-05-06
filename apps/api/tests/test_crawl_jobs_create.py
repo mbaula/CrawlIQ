@@ -8,7 +8,7 @@ from main import app
 
 
 @pytest.fixture
-def client_mock_db():
+def client_mock_db(monkeypatch: pytest.MonkeyPatch):
     """In-memory fake session: Postgres ``Identity()`` PKs do not match SQLite in tests."""
 
     state: dict = {}
@@ -29,6 +29,12 @@ def client_mock_db():
             pass
 
     fake = FakeSession()
+
+    def _fake_enqueue(crawl_job_id: int) -> str:
+        state["enqueued_id"] = crawl_job_id
+        return "test-rq-job-id"
+
+    monkeypatch.setattr("routers.crawl_jobs.enqueue_process_crawl_job", _fake_enqueue)
 
     def _get_db():
         yield fake
@@ -78,6 +84,7 @@ def test_post_crawl_job_created(client_mock_db: TestClient) -> None:
     assert data["seed_url"] == "https://fastapi.tiangolo.com/"
     assert isinstance(data["id"], int)
     assert data["created_at"]
+    assert data.get("enqueued") is True
 
 
 def test_post_crawl_job_normalize_fails_400(
@@ -114,11 +121,19 @@ def test_post_crawl_job_invalid_bounds(client_mock_db: TestClient) -> None:
 
 
 @pytest.mark.integration
-def test_post_crawl_job_postgres(test_database_url: str) -> None:
+def test_post_crawl_job_postgres(
+    test_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
     from db.url import sync_engine_url
+
+    monkeypatch.setattr(
+        "routers.crawl_jobs.enqueue_process_crawl_job",
+        lambda _jid: "integration-test-rq-id",
+    )
 
     engine = create_engine(sync_engine_url(test_database_url), pool_pre_ping=True)
     TestSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -143,6 +158,32 @@ def test_post_crawl_job_postgres(test_database_url: str) -> None:
                 },
             )
         assert response.status_code == 200, response.text
-        assert response.json()["status"] == "queued"
+        body = response.json()
+        assert body["status"] == "queued"
+        assert body.get("enqueued") is True
     finally:
         app.dependency_overrides.clear()
+
+
+def test_post_crawl_job_enqueue_redis_failure_sets_enqueued_false(
+    client_mock_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import redis.exceptions
+
+    def _boom(_jid: int) -> str:
+        raise redis.exceptions.ConnectionError("test redis down")
+
+    monkeypatch.setattr("routers.crawl_jobs.enqueue_process_crawl_job", _boom)
+    response = client_mock_db.post(
+        "/crawl-jobs",
+        json={
+            "seed_url": "https://example.com/",
+            "max_pages": 1,
+            "max_depth": 0,
+            "same_domain_only": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "queued"
+    assert response.json().get("enqueued") is False

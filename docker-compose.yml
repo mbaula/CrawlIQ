@@ -62,7 +62,8 @@ services:
 
   worker:
     build:
-      context: ./apps/worker
+      context: .
+      dockerfile: apps/worker/Dockerfile
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
         PIP_EXTRA_TRUSTED_HOST: ${PIP_EXTRA_TRUSTED_HOST:-}
