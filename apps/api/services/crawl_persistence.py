@@ -20,6 +20,7 @@ from models.domain import CrawlError, CrawlJob, Page, PageLink
 from schemas.crawl_persistence import CrawlFrontierSummary, CrawlPersistResult
 from schemas.fetch_html import FetchHtmlFailure
 from services.fetch_html import fetch_html
+from services.index_page import index_page
 from services.parse_html import parse_html
 from services.urlnorm import normalize_url
 
@@ -356,6 +357,10 @@ def run_crawl_frontier(
             )
 
         session.commit()
+
+        if result.status == "saved" and result.page_id is not None:
+            index_page(session, result.page_id)
+            session.commit()
 
         job = session.get(CrawlJob, job_id)
         if job is None:
