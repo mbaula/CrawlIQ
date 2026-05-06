@@ -10,12 +10,20 @@ from sqlalchemy.orm import Session, sessionmaker
 from config import Settings
 from db.url import sync_engine_url
 from models.domain import CrawlError, CrawlJob, Page, PageLink
-from services.crawl_persistence import crawl_and_persist_page
+from services.crawl_persistence import crawl_and_persist_page, run_crawl_frontier
 
 
 def _session_factory(test_database_url: str) -> sessionmaker[Session]:
     engine = create_engine(sync_engine_url(test_database_url), pool_pre_ping=True)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def _frontier_html(title: str, links: list[tuple[str, str]]) -> bytes:
+    parts = [f"<html><head><title>{title}</title></head><body>"]
+    for href, text in links:
+        parts.append(f'<a href="{href}">{text}</a>')
+    parts.append("</body></html>")
+    return "".join(parts).encode()
 
 
 def _html_with_links() -> bytes:
@@ -259,6 +267,202 @@ def test_crawl_persist_parse_failure(test_database_url: str, monkeypatch: pytest
         assert err is not None
         assert err.error_type == "parse_error"
         assert len(session.scalars(select(Page).where(Page.crawl_job_id == job_id)).all()) == 0
+
+
+@pytest.mark.integration
+def test_run_crawl_frontier_stops_at_max_pages(test_database_url: str) -> None:
+    mk = _session_factory(test_database_url)
+    with mk() as session:
+        job = CrawlJob(
+            seed_url="https://frontier.example/start",
+            normalized_seed_url="https://frontier.example/start",
+            status="queued",
+            max_pages=3,
+            max_depth=10,
+            same_domain_only=True,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "frontier.example"
+        p = request.url.path
+        if p == "/start":
+            body = _frontier_html("seed", [("/a", "a"), ("/b", "b")])
+        elif p == "/a":
+            body = _frontier_html("a", [("/c", "c")])
+        elif p == "/b":
+            body = _frontier_html("b", [])
+        elif p == "/c":
+            body = _frontier_html("c", [("/d", "d")])
+        elif p == "/d":
+            body = _frontier_html("d", [])
+        else:
+            return httpx.Response(404, content=b"nope")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            content=body,
+        )
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport,
+        follow_redirects=True,
+        max_redirects=10,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        with mk() as session:
+            summary = run_crawl_frontier(
+                session,
+                job_id,
+                settings=Settings(),
+                http_client=client,
+            )
+            session.commit()
+
+    assert summary.status == "completed"
+    with mk() as session:
+        job = session.get(CrawlJob, job_id)
+        assert job is not None
+        assert job.pages_crawled == 3
+        pages = session.scalars(select(Page).where(Page.crawl_job_id == job_id)).all()
+        assert len(pages) == 3
+        norms = {p.normalized_url for p in pages}
+        assert norms == {
+            "https://frontier.example/start",
+            "https://frontier.example/a",
+            "https://frontier.example/b",
+        }
+
+
+@pytest.mark.integration
+def test_run_crawl_frontier_respects_max_depth(test_database_url: str) -> None:
+    mk = _session_factory(test_database_url)
+    with mk() as session:
+        job = CrawlJob(
+            seed_url="https://frontier.example/start",
+            normalized_seed_url="https://frontier.example/start",
+            status="queued",
+            max_pages=20,
+            max_depth=1,
+            same_domain_only=True,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        p = request.url.path
+        if p == "/start":
+            body = _frontier_html("seed", [("/a", "a"), ("/b", "b")])
+        elif p == "/a":
+            body = _frontier_html("a", [("/c", "c")])
+        elif p == "/b":
+            body = _frontier_html("b", [])
+        elif p == "/c":
+            body = _frontier_html("c", [])
+        else:
+            return httpx.Response(404, content=b"nope")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            content=body,
+        )
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport,
+        follow_redirects=True,
+        max_redirects=10,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        with mk() as session:
+            summary = run_crawl_frontier(
+                session,
+                job_id,
+                settings=Settings(),
+                http_client=client,
+            )
+            session.commit()
+
+    assert summary.status == "completed"
+    with mk() as session:
+        job = session.get(CrawlJob, job_id)
+        assert job is not None
+        assert job.pages_crawled == 3
+        norms = {
+            p.normalized_url
+            for p in session.scalars(select(Page).where(Page.crawl_job_id == job_id)).all()
+        }
+        assert "https://frontier.example/c" not in norms
+
+
+@pytest.mark.integration
+def test_run_crawl_frontier_same_domain_only_skips_external(
+    test_database_url: str,
+) -> None:
+    mk = _session_factory(test_database_url)
+    with mk() as session:
+        job = CrawlJob(
+            seed_url="https://frontier.example/root",
+            normalized_seed_url="https://frontier.example/root",
+            status="queued",
+            max_pages=10,
+            max_depth=2,
+            same_domain_only=True,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        p = request.url.path
+        if p == "/root":
+            body = _frontier_html(
+                "root",
+                [
+                    ("/internal", "in"),
+                    ("https://other.example/out", "out"),
+                ],
+            )
+        elif p == "/internal":
+            body = _frontier_html("internal", [])
+        else:
+            return httpx.Response(404, content=b"nope")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            content=body,
+        )
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport,
+        follow_redirects=True,
+        max_redirects=10,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        with mk() as session:
+            summary = run_crawl_frontier(
+                session,
+                job_id,
+                settings=Settings(),
+                http_client=client,
+            )
+            session.commit()
+
+    assert summary.status == "completed"
+    with mk() as session:
+        norms = {
+            p.normalized_url
+            for p in session.scalars(select(Page).where(Page.crawl_job_id == job_id)).all()
+        }
+        assert norms == {
+            "https://frontier.example/root",
+            "https://frontier.example/internal",
+        }
 
 
 @pytest.mark.integration

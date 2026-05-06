@@ -5,6 +5,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class CrawlFrontierSummary(BaseModel):
+    """Outcome of ``run_crawl_frontier`` for a crawl job."""
+
+    status: Literal["completed", "failed"]
+    error_message: str | None = None
+
+
 class CrawlPersistResult(BaseModel):
     """Outcome of ``crawl_and_persist_page`` for frontier and metrics."""
 

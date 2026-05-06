@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from db.session import get_session_factory
 from models.domain import CrawlJob
-from services.crawl_persistence import crawl_and_persist_page
+from services.crawl_persistence import run_crawl_frontier
 
 log = logging.getLogger("crawliq-worker.jobs")
 
@@ -22,8 +22,8 @@ def ping_job(message: str = "ping") -> str:
 
 def process_crawl_job(crawl_job_id: int) -> None:
     """
-    Run the first crawl step for ``crawl_job_id``: ``queued``/``pending`` → ``running``,
-    then ``crawl_and_persist_page`` for the seed URL; finalize ``completed`` or ``failed``.
+    ``queued``/``pending`` → ``running``, then BFS frontier crawl (seed + eligible links)
+    until limits or empty frontier; finalize ``completed`` or ``failed``.
     """
     factory = get_session_factory()
     session = factory()
@@ -47,15 +47,10 @@ def process_crawl_job(crawl_job_id: int) -> None:
         session.flush()
 
         try:
-            result = crawl_and_persist_page(
-                session,
-                crawl_job_id,
-                job.seed_url,
-                depth=0,
-            )
+            summary = run_crawl_frontier(session, crawl_job_id)
         except Exception as exc:
             log.exception(
-                "process_crawl_job: crawl_and_persist_page raised job_id=%s",
+                "process_crawl_job: run_crawl_frontier raised job_id=%s",
                 crawl_job_id,
             )
             session.rollback()
@@ -73,17 +68,17 @@ def process_crawl_job(crawl_job_id: int) -> None:
             return
 
         finished = datetime.now(timezone.utc)
-        if result.status == "failed":
+        if summary.status == "failed":
             job.status = "failed"
-            job.error_message = result.error_message or result.error_type or "crawl failed"
+            job.error_message = summary.error_message or "crawl failed"
         else:
             job.status = "completed"
         job.finished_at = finished
         session.commit()
         log.info(
-            "process_crawl_job: done job_id=%s result=%s",
+            "process_crawl_job: done job_id=%s summary=%s",
             crawl_job_id,
-            result.status,
+            summary.status,
         )
     finally:
         session.close()

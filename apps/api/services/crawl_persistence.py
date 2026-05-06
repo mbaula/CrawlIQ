@@ -6,6 +6,8 @@ Intended as the unit of work for one frontier step; the worker can call this lat
 from __future__ import annotations
 
 import hashlib
+from collections import deque
+from collections.abc import Iterable
 from datetime import datetime, timezone
 import httpx
 from sqlalchemy import select
@@ -15,7 +17,7 @@ from yarl import URL
 
 from config import Settings, get_settings
 from models.domain import CrawlError, CrawlJob, Page, PageLink
-from schemas.crawl_persistence import CrawlPersistResult
+from schemas.crawl_persistence import CrawlFrontierSummary, CrawlPersistResult
 from schemas.fetch_html import FetchHtmlFailure
 from services.fetch_html import fetch_html
 from services.parse_html import parse_html
@@ -62,6 +64,36 @@ def _is_crawl_eligible_target(normalized_link: str, job: CrawlJob) -> bool:
     if not seed:
         return False
     return host == seed
+
+
+def frontier_enqueues(
+    eligible_targets: Iterable[str],
+    *,
+    current_depth: int,
+    max_depth: int,
+    max_pages: int,
+    pages_crawled: int,
+    seen: set[str],
+) -> list[tuple[str, int]]:
+    """
+    Decide which normalized URLs to add to the BFS frontier.
+
+    Mutates ``seen`` for each newly scheduled URL. Respects ``max_depth`` for the
+    child layer (``current_depth + 1``) and does not schedule past ``max_pages``
+    already crawled.
+    """
+    child_depth = current_depth + 1
+    if child_depth > max_depth:
+        return []
+    out: list[tuple[str, int]] = []
+    for target in eligible_targets:
+        if target in seen:
+            continue
+        if pages_crawled >= max_pages:
+            break
+        seen.add(target)
+        out.append((target, child_depth))
+    return out
 
 
 def _record_crawl_error(
@@ -259,3 +291,113 @@ def crawl_and_persist_page(
         normalized_url=normalized_page_url,
         links_saved=links_saved,
     )
+
+
+def run_crawl_frontier(
+    session: Session,
+    job_id: int,
+    *,
+    settings: Settings | None = None,
+    http_client: httpx.Client | None = None,
+) -> CrawlFrontierSummary:
+    """
+    Breadth-first crawl: seed at depth 0, then eligible links at increasing depth
+    until ``max_pages``, ``max_depth``, or an empty frontier. Commits after each
+    page attempt so progress is durable.
+
+    Returns ``failed`` if no page was successfully stored (``pages_crawled`` still 0).
+    """
+    settings = settings or get_settings()
+    job = session.get(CrawlJob, job_id)
+    if job is None:
+        return CrawlFrontierSummary(
+            status="failed",
+            error_message=f"crawl job {job_id} does not exist",
+        )
+
+    seen: set[str] = {job.normalized_seed_url}
+    queue: deque[tuple[str, int]] = deque([(job.seed_url, 0)])
+    last_failure_msg: str | None = None
+
+    while queue:
+        job = session.get(CrawlJob, job_id)
+        if job is None:
+            return CrawlFrontierSummary(
+                status="failed",
+                error_message="crawl job disappeared during crawl",
+            )
+        if job.pages_crawled >= job.max_pages:
+            break
+
+        url, depth = queue.popleft()
+        if depth > job.max_depth:
+            continue
+
+        job = session.get(CrawlJob, job_id)
+        if job is None:
+            return CrawlFrontierSummary(
+                status="failed",
+                error_message="crawl job disappeared during crawl",
+            )
+        if job.pages_crawled >= job.max_pages:
+            break
+
+        result = crawl_and_persist_page(
+            session,
+            job_id,
+            url,
+            depth=depth,
+            settings=settings,
+            http_client=http_client,
+        )
+        if result.status == "failed":
+            last_failure_msg = (
+                result.error_message or result.error_type or "crawl failed"
+            )
+
+        session.commit()
+
+        job = session.get(CrawlJob, job_id)
+        if job is None:
+            return CrawlFrontierSummary(
+                status="failed",
+                error_message="crawl job disappeared during crawl",
+            )
+
+        if result.status == "failed":
+            continue
+
+        if result.page_id is None:
+            continue
+
+        links = session.scalars(
+            select(PageLink).where(
+                PageLink.source_page_id == result.page_id,
+                PageLink.is_crawl_eligible.is_(True),
+            ),
+        ).all()
+
+        for url_depth in frontier_enqueues(
+            (pl.target_normalized_url for pl in links),
+            current_depth=depth,
+            max_depth=job.max_depth,
+            max_pages=job.max_pages,
+            pages_crawled=job.pages_crawled,
+            seen=seen,
+        ):
+            queue.append(url_depth)
+
+    job = session.get(CrawlJob, job_id)
+    if job is None:
+        return CrawlFrontierSummary(
+            status="failed",
+            error_message="crawl job not found",
+        )
+
+    if job.pages_crawled == 0:
+        return CrawlFrontierSummary(
+            status="failed",
+            error_message=last_failure_msg or "no pages could be crawled",
+        )
+
+    return CrawlFrontierSummary(status="completed")
