@@ -364,6 +364,8 @@ def run_crawl_frontier(
                 status="failed",
                 error_message="crawl job disappeared during crawl",
             )
+        if job.status == "cancelled":
+            return CrawlFrontierSummary(status="completed")
         if job.pages_crawled >= job.max_pages:
             break
 
@@ -377,6 +379,8 @@ def run_crawl_frontier(
                 status="failed",
                 error_message="crawl job disappeared during crawl",
             )
+        if job.status == "cancelled":
+            return CrawlFrontierSummary(status="completed")
         if job.pages_crawled >= job.max_pages:
             break
 

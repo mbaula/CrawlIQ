@@ -4,6 +4,7 @@ import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from db.session import get_db
 from models.domain import CrawlError, CrawlJob, Page, PageLink
@@ -122,3 +123,34 @@ def list_crawl_job_errors(
         .limit(limit)
     )
     return list(db.scalars(stmt).all())
+
+
+@router.post("/{job_id}/cancel", response_model=CrawlJobDetailRead)
+def cancel_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobDetailRead:
+    job = db.get(CrawlJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    if job.status in ("completed", "failed", "cancelled"):
+        raise HTTPException(status_code=409, detail=f"cannot cancel job in status '{job.status}'")
+
+    job.status = "cancelled"
+    try:
+        db.commit()
+        db.refresh(job)
+    except (SQLAlchemyError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Reuse the existing detail response computation.
+    discovered = db.scalar(
+        select(func.count(distinct(PageLink.target_normalized_url))).where(
+            PageLink.crawl_job_id == job_id,
+            PageLink.is_crawl_eligible.is_(True),
+        ),
+    )
+    pages_discovered = int(discovered or 0)
+    denom = float(job.max_pages) if job.max_pages > 0 else 1.0
+    crawl_progress = min(1.0, float(job.pages_crawled) / denom)
+    payload = CrawlJobRead.model_validate(job).model_dump()
+    payload["pages_discovered"] = pages_discovered
+    payload["crawl_progress"] = crawl_progress
+    return CrawlJobDetailRead(**payload)

@@ -68,6 +68,12 @@ def process_crawl_job(crawl_job_id: int) -> None:
             return
 
         finished = datetime.now(timezone.utc)
+        if job.status == "cancelled":
+            if job.finished_at is None:
+                job.finished_at = finished
+            session.commit()
+            log.info("process_crawl_job: cancelled job_id=%s", crawl_job_id)
+            return
         if summary.status == "failed":
             job.status = "failed"
             job.error_message = summary.error_message or "crawl failed"

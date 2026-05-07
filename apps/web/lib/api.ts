@@ -136,6 +136,13 @@ export async function listCrawlJobErrors(jobId: number): Promise<CrawlErrorRead[
   });
 }
 
+export async function cancelCrawlJob(jobId: number): Promise<CrawlJobDetailRead> {
+  return await fetchJsonOrThrow<CrawlJobDetailRead>(`${getApiBaseUrl()}/crawl-jobs/${jobId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export type SearchResultItem = {
   page_id: number;
   title: string | null;

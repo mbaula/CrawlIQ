@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
-import { getCrawlJob, listCrawlJobErrors, listCrawlJobPages, type CrawlJobDetailRead, type CrawlErrorRead, type PageRead } from "@/lib/api";
+import { cancelCrawlJob, getCrawlJob, listCrawlJobErrors, listCrawlJobPages, type CrawlJobDetailRead, type CrawlErrorRead, type PageRead } from "@/lib/api";
 
 type Props = {
   jobId: number;
@@ -54,6 +54,7 @@ export function JobMonitor({ jobId }: Props) {
   const [errors, setErrors] = useState<CrawlErrorRead[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cancelling, setCancelling] = useState(false);
 
   const shouldPoll = useMemo(() => (job ? isRunningStatus(job.status) : true), [job]);
 
@@ -62,6 +63,19 @@ export function JobMonitor({ jobId }: Props) {
     setJob(j);
     setPages(p);
     setErrors(e);
+  }
+
+  async function onCancel() {
+    if (!job || !isRunningStatus(job.status)) return;
+    setCancelling(true);
+    try {
+      await cancelCrawlJob(jobId);
+      await loadAll();
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Failed to cancel job.");
+    } finally {
+      setCancelling(false);
+    }
   }
 
   useEffect(() => {
@@ -134,6 +148,19 @@ export function JobMonitor({ jobId }: Props) {
               <StatusBadge status={job.status} />
               {shouldPoll ? <span className="font-mono text-[10px] uppercase tracking-widest text-muted">live</span> : null}
             </div>
+            {isRunningStatus(job.status) ? (
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  disabled={cancelling}
+                  className="rounded border border-danger/40 bg-danger/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-danger transition-colors hover:border-danger disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {cancelling ? "Cancelling…" : "Cancel job"}
+                </button>
+                <span className="text-xs text-muted">Stops crawling between pages.</span>
+              </div>
+            ) : null}
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
             <div>
