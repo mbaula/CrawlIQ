@@ -1,4 +1,4 @@
-"""Search indexed pages using the inverted index."""
+"""Search indexed pages using BM25 ranking."""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session
 from crawliq_core.tokenize import tokenize
 from models.domain import InvertedIndex, Page, Term
 
+BM25_K1 = 1.5
+BM25_B = 0.75
+
 
 @dataclass(frozen=True)
 class _RankedPage:
@@ -21,28 +24,95 @@ class _RankedPage:
     matched_terms: frozenset[str]
 
 
-def _collection_page_count(session: Session, *, crawl_job_id: int | None) -> int:
-    """Number of pages considered indexed for this search scope."""
-    stmt = select(func.count()).select_from(Page).where(Page.indexed_at.isnot(None))
+@dataclass(frozen=True)
+class _CorpusStats:
+    indexed_page_count: int
+    average_token_count: float
+
+
+def _compute_corpus_stats(session: Session, *, crawl_job_id: int | None) -> _CorpusStats:
+    """
+    Compute N and avgdl for BM25.
+
+    Only considers pages where indexed_at is set AND token_count > 0.
+    """
+    base_filters = [
+        Page.indexed_at.isnot(None),
+        Page.token_count > 0,
+    ]
     if crawl_job_id is not None:
-        stmt = stmt.where(Page.crawl_job_id == crawl_job_id)
-    count = session.scalar(stmt)
-    return int(count or 0)
+        base_filters.append(Page.crawl_job_id == crawl_job_id)
+
+    stmt = select(
+        func.count(),
+        func.coalesce(func.avg(Page.token_count), 0),
+    ).where(and_(*base_filters))
+
+    row = session.execute(stmt).one()
+    count = int(row[0] or 0)
+    avg_tokens = float(row[1] or 0)
+    return _CorpusStats(indexed_page_count=count, average_token_count=avg_tokens)
 
 
-def _smooth_inverse_document_frequency(
-    indexed_page_count: int,
-    document_frequency: int,
+def _bm25_idf(total_docs: int, document_frequency: int) -> float:
+    """
+    BM25 IDF: ln(1 + (N - df + 0.5) / (df + 0.5))
+
+    Returns 0 if total_docs is 0 to avoid invalid scores.
+    """
+    n = max(total_docs, 0)
+    df = max(document_frequency, 0)
+    if n == 0:
+        return 0.0
+    numerator = n - df + 0.5
+    denominator = df + 0.5
+    return math.log(1.0 + numerator / denominator)
+
+
+def _bm25_term_score(
+    term_frequency: int,
+    document_length: int,
+    average_document_length: float,
+    idf: float,
 ) -> float:
     """
-    Smooth IDF so rare terms get a modest boost and df=0 does not explode.
+    BM25 term contribution:
 
-    Uses a common smoothed form: log(N / (df + 1)) + 1, where N is the
-    number of indexed pages in scope.
+        IDF * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / avgdl)))
     """
-    n = max(indexed_page_count, 1)
-    df = max(int(document_frequency), 0)
-    return math.log(n / (df + 1.0) + 1.0)
+    tf = float(term_frequency)
+    dl = float(document_length)
+    avgdl = average_document_length if average_document_length > 0 else 1.0
+
+    length_norm = 1.0 - BM25_B + BM25_B * (dl / avgdl)
+    numerator = tf * (BM25_K1 + 1.0)
+    denominator = tf + BM25_K1 * length_norm
+
+    return idf * (numerator / denominator)
+
+
+def _compute_scoped_document_frequency(
+    session: Session,
+    term_id: int,
+    crawl_job_id: int,
+) -> int:
+    """
+    Count how many indexed pages (token_count > 0) in the given job contain this term.
+    """
+    stmt = (
+        select(func.count(InvertedIndex.page_id.distinct()))
+        .join(Page, Page.id == InvertedIndex.page_id)
+        .where(
+            and_(
+                InvertedIndex.term_id == term_id,
+                Page.crawl_job_id == crawl_job_id,
+                Page.indexed_at.isnot(None),
+                Page.token_count > 0,
+            ),
+        )
+    )
+    result = session.scalar(stmt)
+    return int(result or 0)
 
 
 def _build_snippet(
@@ -52,9 +122,7 @@ def _build_snippet(
     highlight_terms: frozenset[str],
     max_visible_chars: int = 180,
 ) -> str:
-    """
-    Short excerpt from title/body with an attempt to show a matched term.
-    """
+    """Short excerpt from title/body biased toward a matched term."""
     if not highlight_terms:
         source = (body or title or "").strip()
         return source[:max_visible_chars] if source else ""
@@ -89,17 +157,20 @@ def execute_search(
     raw_query: str,
     crawl_job_id: int | None,
     result_limit: int,
-) -> tuple[list[_RankedPage], int]:
+) -> tuple[list[_RankedPage], _CorpusStats]:
     """
-    Return ranked page hits and the number of indexed pages considered in scope.
+    Return ranked page hits (BM25) and corpus stats.
 
-    Scoring: sum over query tokens of (query_token_weight * tf * idf(term)).
+    Scoring uses BM25 with k1=1.5, b=0.75. Query term counts act as multipliers.
     """
     query_term_weights: Counter[str] = Counter(tokenize(raw_query))
-    if not query_term_weights:
-        return [], _collection_page_count(session, crawl_job_id=crawl_job_id)
+    corpus_stats = _compute_corpus_stats(session, crawl_job_id=crawl_job_id)
 
-    indexed_page_count = _collection_page_count(session, crawl_job_id=crawl_job_id)
+    if not query_term_weights:
+        return [], corpus_stats
+
+    if corpus_stats.indexed_page_count == 0 or corpus_stats.average_token_count <= 0:
+        return [], corpus_stats
 
     term_rows = session.scalars(
         select(Term).where(Term.term.in_(list(query_term_weights.keys()))),
@@ -108,34 +179,52 @@ def execute_search(
 
     page_score_by_id: dict[int, float] = defaultdict(float)
     matched_terms_by_page: dict[int, set[str]] = defaultdict(set)
+    page_token_count_cache: dict[int, int] = {}
 
     for query_term, query_weight in query_term_weights.items():
         term_row = term_by_key.get(query_term)
         if term_row is None:
             continue
 
-        idf_weight = _smooth_inverse_document_frequency(
-            indexed_page_count,
-            int(term_row.document_frequency or 0),
-        )
+        if crawl_job_id is not None:
+            document_frequency = _compute_scoped_document_frequency(
+                session,
+                term_row.id,
+                crawl_job_id,
+            )
+        else:
+            document_frequency = int(term_row.document_frequency or 0)
 
-        filters = [
+        idf = _bm25_idf(corpus_stats.indexed_page_count, document_frequency)
+        if idf <= 0:
+            continue
+
+        page_filters = [
             InvertedIndex.term_id == term_row.id,
             Page.indexed_at.isnot(None),
+            Page.token_count > 0,
         ]
         if crawl_job_id is not None:
-            filters.append(Page.crawl_job_id == crawl_job_id)
+            page_filters.append(Page.crawl_job_id == crawl_job_id)
 
         stmt = (
-            select(InvertedIndex.page_id, InvertedIndex.term_frequency)
+            select(InvertedIndex.page_id, InvertedIndex.term_frequency, Page.token_count)
             .join(Page, Page.id == InvertedIndex.page_id)
-            .where(and_(*filters))
+            .where(and_(*page_filters))
         )
 
-        for page_id, term_frequency in session.execute(stmt):
-            contribution = float(term_frequency) * idf_weight * float(query_weight)
-            page_score_by_id[int(page_id)] += contribution
-            matched_terms_by_page[int(page_id)].add(query_term)
+        for page_id, term_frequency, token_count in session.execute(stmt):
+            page_id = int(page_id)
+            page_token_count_cache[page_id] = int(token_count)
+
+            bm25_contribution = _bm25_term_score(
+                term_frequency=int(term_frequency),
+                document_length=int(token_count),
+                average_document_length=corpus_stats.average_token_count,
+                idf=idf,
+            )
+            page_score_by_id[page_id] += bm25_contribution * float(query_weight)
+            matched_terms_by_page[page_id].add(query_term)
 
     ranked = sorted(
         (
@@ -146,11 +235,10 @@ def execute_search(
             )
             for pid, score in page_score_by_id.items()
         ),
-        key=lambda row: row.score,
-        reverse=True,
+        key=lambda row: (-row.score, row.page_id),
     )[:result_limit]
 
-    return ranked, indexed_page_count
+    return ranked, corpus_stats
 
 
 def search_indexed_pages(
@@ -161,7 +249,7 @@ def search_indexed_pages(
     result_limit: int,
 ) -> list[dict]:
     """
-    Run search and return rows suitable for ``SearchResponse``.
+    Run BM25 search and return rows suitable for ``SearchResponse``.
 
     Each dict has keys: page_id, title, url, score, snippet, matched_terms (sorted list).
     """
