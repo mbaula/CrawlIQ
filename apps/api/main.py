@@ -10,11 +10,13 @@ from db.session import get_engine
 from routers.crawl_jobs import router as crawl_jobs_router
 from routers.queue import router as queue_router
 from routers.search import router as search_router
+from routers.stats import router as stats_router
 
 app = FastAPI(title="CrawlIQ API")
 app.include_router(crawl_jobs_router)
 app.include_router(queue_router)
 app.include_router(search_router)
+app.include_router(stats_router)
 
 
 @lru_cache

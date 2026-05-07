@@ -170,3 +170,28 @@ export async function searchPages(params: {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+export type DomainCount = { domain: string; page_count: number };
+export type SearchQueryRead = {
+  query: string;
+  result_count: number;
+  latency_ms: number;
+  created_at: string;
+};
+export type CrawlStatsRead = {
+  total_crawl_jobs: number;
+  total_pages_crawled: number;
+  total_pages_indexed: number;
+  total_failures: number;
+  failed_url_count: number;
+  average_search_latency_ms: number;
+  recent_searches: SearchQueryRead[];
+  top_crawled_domains: DomainCount[];
+};
+
+export async function getStats(): Promise<CrawlStatsRead> {
+  return await fetchJsonOrThrow<CrawlStatsRead>(`${getApiBaseUrl()}/stats`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+}
