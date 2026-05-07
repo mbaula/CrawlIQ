@@ -358,9 +358,11 @@ def run_crawl_frontier(
 
         session.commit()
 
-        if result.status == "saved" and result.page_id is not None:
-            index_page(session, result.page_id)
-            session.commit()
+        if result.status in ("saved", "duplicate") and result.page_id is not None:
+            page = session.get(Page, result.page_id)
+            if page is not None and page.indexed_at is None:
+                index_page(session, result.page_id)
+                session.commit()
 
         job = session.get(CrawlJob, job_id)
         if job is None:
