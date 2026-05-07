@@ -6,11 +6,12 @@ import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.session import get_db
 from models.domain import CrawlJob, SearchQuery
-from schemas.search import SearchResponse, SearchResultItem
+from schemas.search import SearchQueryRead, SearchResponse, SearchResultItem, SearchStatsResponse
 from services.search_pages import search_indexed_pages
 
 router = APIRouter(tags=["search"])
@@ -60,3 +61,20 @@ def search(
         latency_ms=elapsed_ms,
         results=results,
     )
+
+
+@router.get("/search/stats", response_model=SearchStatsResponse)
+def search_stats(
+    db: Session = Depends(get_db),
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> SearchStatsResponse:
+    stmt = (
+        select(SearchQuery)
+        .order_by(SearchQuery.created_at.desc(), SearchQuery.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = list(db.scalars(stmt).all())
+    recent = [SearchQueryRead.model_validate(r) for r in rows]
+    return SearchStatsResponse(recent=recent)

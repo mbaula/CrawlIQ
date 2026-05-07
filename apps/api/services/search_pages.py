@@ -120,9 +120,14 @@ def _build_snippet(
     title: str | None,
     body: str | None,
     highlight_terms: frozenset[str],
-    max_visible_chars: int = 180,
+    max_visible_chars: int = 200,
 ) -> str:
-    """Short excerpt from title/body biased toward a matched term."""
+    """
+    Short excerpt from body (or title) that maximizes matched term coverage.
+
+    Scans for all term positions and picks the window containing the most
+    distinct matched terms.
+    """
     if not highlight_terms:
         source = (body or title or "").strip()
         return source[:max_visible_chars] if source else ""
@@ -134,17 +139,41 @@ def _build_snippet(
         return ""
 
     lowered = haystack.casefold()
-    best_start = 0
+    term_positions: list[tuple[int, str]] = []
     for term in highlight_terms:
-        pos = lowered.find(term)
-        if pos >= 0:
-            best_start = max(0, pos - 40)
-            break
+        start = 0
+        while True:
+            pos = lowered.find(term, start)
+            if pos < 0:
+                break
+            term_positions.append((pos, term))
+            start = pos + 1
+
+    if not term_positions:
+        chunk = haystack[:max_visible_chars].strip()
+        if len(haystack) > len(chunk):
+            chunk = f"{chunk}…"
+        return chunk
+
+    term_positions.sort(key=lambda x: x[0])
+
+    best_start = 0
+    best_term_count = 0
+
+    for anchor_pos, _ in term_positions:
+        window_start = max(0, anchor_pos - 40)
+        window_end = window_start + max_visible_chars
+        terms_in_window = {
+            t for (p, t) in term_positions if window_start <= p < window_end
+        }
+        if len(terms_in_window) > best_term_count:
+            best_term_count = len(terms_in_window)
+            best_start = window_start
 
     chunk = haystack[best_start : best_start + max_visible_chars].strip()
-    if len(haystack) > len(chunk):
-        chunk = f"{chunk}…"
-    return chunk
+    prefix = "…" if best_start > 0 else ""
+    suffix = "…" if best_start + max_visible_chars < len(haystack) else ""
+    return f"{prefix}{chunk}{suffix}"
 
 
 def _strip_repeated_ws(text: str) -> str:

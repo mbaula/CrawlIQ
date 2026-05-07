@@ -1,5 +1,6 @@
-"""API models for ``GET /search``."""
+"""API models for search endpoints."""
 
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -24,3 +25,19 @@ class SearchResponse(BaseModel):
     result_count: int
     latency_ms: int
     results: list[SearchResultItem]
+
+
+class SearchQueryRead(BaseModel):
+    """Row from ``search_queries`` for stats/analytics."""
+
+    model_config = {"from_attributes": True}  # pydantic v2
+    query: str
+    result_count: int
+    latency_ms: int
+    created_at: datetime
+
+
+class SearchStatsResponse(BaseModel):
+    """Response for ``GET /search/stats``."""
+
+    recent: list[SearchQueryRead]

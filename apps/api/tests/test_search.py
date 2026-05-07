@@ -42,6 +42,25 @@ def test_search_unknown_job_404(client_mock_search_db) -> None:
     assert response.status_code == 404
 
 
+def test_search_stats_returns_rows(client_mock_search_db) -> None:
+    client, mock_session = client_mock_search_db
+    row = SearchQuery(
+        query="hello",
+        result_count=2,
+        latency_ms=5,
+    )
+    row.created_at = datetime.now(timezone.utc)
+    mock_session.scalars.return_value.all.return_value = [row]
+
+    response = client.get("/search/stats?limit=10")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["recent"][0]["query"] == "hello"
+    assert body["recent"][0]["result_count"] == 2
+    assert body["recent"][0]["latency_ms"] == 5
+    assert body["recent"][0]["created_at"]
+
+
 @pytest.mark.integration
 def test_search_returns_hits_and_logs_query(test_database_url: str) -> None:
     from db.url import sync_engine_url
