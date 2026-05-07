@@ -35,6 +35,7 @@ class FetchHtmlFailure(BaseModel):
     elapsed_ms: int | None = None
     status_code: int | None = None
     content_type: str | None = None
+    retry_count: int = Field(0, ge=0, description="Number of internal retries attempted before final failure.")
 
 
 FetchHtmlOutcome = FetchHtmlSuccess | FetchHtmlFailure

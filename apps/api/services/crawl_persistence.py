@@ -105,6 +105,7 @@ def _record_crawl_error(
     norm_key: str,
     error_type: str,
     error_message: str | None,
+    retry_count: int = 0,
 ) -> None:
     err = session.scalar(
         select(CrawlError).where(
@@ -116,7 +117,7 @@ def _record_crawl_error(
         err.url = url
         err.error_type = error_type
         err.error_message = error_message
-        err.retry_count = err.retry_count + 1
+        err.retry_count = int(retry_count)
         err.updated_at = datetime.now(timezone.utc)
     else:
         session.add(
@@ -126,6 +127,7 @@ def _record_crawl_error(
                 normalized_url=norm_key,
                 error_type=error_type,
                 error_message=error_message,
+                retry_count=int(retry_count),
             ),
         )
 
@@ -138,6 +140,7 @@ def crawl_and_persist_page(
     depth: int = 0,
     settings: Settings | None = None,
     http_client: httpx.Client | None = None,
+    robots_cache: dict[str, "RobotsRules"] | None = None,
 ) -> CrawlPersistResult:
     """
     Fetch ``url``, parse, and persist one page for ``job_id``.
@@ -155,6 +158,36 @@ def crawl_and_persist_page(
             error_message=f"crawl job {job_id} does not exist",
         )
 
+    from services.robots import RobotsRules, fetch_robots_txt  # noqa: PLC0415
+
+    robots_cache = robots_cache if robots_cache is not None else {}
+    if http_client is not None:
+        domain = _link_host_lower(url) or ""
+        if domain:
+            rules = robots_cache.get(domain)
+            if rules is None:
+                rules = fetch_robots_txt(url=url, http_client=http_client, timeout_seconds=float(settings.crawl_request_timeout_seconds))
+                robots_cache[domain] = rules
+            if not rules.is_allowed(url):
+                norm_key = _error_normalized_key(url)
+                _record_crawl_error(
+                    session,
+                    job,
+                    url=url.strip(),
+                    norm_key=norm_key or url.strip(),
+                    error_type="robots_disallow",
+                    error_message="blocked by robots.txt",
+                    retry_count=0,
+                )
+                job.pages_failed = job.pages_failed + 1
+                session.flush()
+                return CrawlPersistResult(
+                    status="failed",
+                    normalized_url=norm_key or url.strip(),
+                    error_type="robots_disallow",
+                    error_message="blocked by robots.txt",
+                )
+
     fetch_out = fetch_html(url, settings=settings, client=http_client)
     if isinstance(fetch_out, FetchHtmlFailure):
         norm_key = _error_normalized_key(url)
@@ -165,6 +198,7 @@ def crawl_and_persist_page(
             norm_key=norm_key or url.strip(),
             error_type=fetch_out.kind,
             error_message=fetch_out.reason,
+            retry_count=int(fetch_out.retry_count or 0),
         )
         job.pages_failed = job.pages_failed + 1
         session.flush()
@@ -319,6 +353,9 @@ def run_crawl_frontier(
     seen: set[str] = {job.normalized_seed_url}
     queue: deque[tuple[str, int]] = deque([(job.seed_url, 0)])
     last_failure_msg: str | None = None
+    from services.robots import RobotsRules  # noqa: PLC0415
+
+    robots_cache: dict[str, RobotsRules] = {}
 
     while queue:
         job = session.get(CrawlJob, job_id)
@@ -350,6 +387,7 @@ def run_crawl_frontier(
             depth=depth,
             settings=settings,
             http_client=http_client,
+            robots_cache=robots_cache,  # shared per crawl run
         )
         if result.status == "failed":
             last_failure_msg = (

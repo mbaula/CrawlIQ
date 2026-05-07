@@ -44,6 +44,24 @@ def index_page(session: Session, page_id: int, *, title_weight: int = 3) -> None
 
     was_indexed = page.indexed_at is not None
 
+    # Duplicate content detection: if another already-indexed page in the same crawl job
+    # has the same extracted-text hash, skip postings for this page so duplicates don't
+    # pollute the search index.
+    if page.content_hash:
+        existing_indexed_page_id = session.scalar(
+            select(Page.id).where(
+                Page.crawl_job_id == page.crawl_job_id,
+                Page.content_hash == page.content_hash,
+                Page.id != page_id,
+                Page.indexed_at.isnot(None),
+                Page.token_count > 0,
+            ),
+        )
+        if existing_indexed_page_id is not None:
+            page.indexed_at = datetime.now(timezone.utc)
+            page.token_count = 0
+            return
+
     old_term_ids = set(
         session.scalars(
             select(InvertedIndex.term_id).where(InvertedIndex.page_id == page_id),

@@ -210,6 +210,60 @@ def test_crawl_persist_fetch_failure_records_error(test_database_url: str) -> No
         err = session.scalar(select(CrawlError).where(CrawlError.crawl_job_id == job_id))
         assert err is not None
         assert err.error_type == "http_error"
+        assert err.retry_count == 2
+
+
+@pytest.mark.integration
+def test_crawl_persist_robots_disallow_skips_url(test_database_url: str) -> None:
+    mk = _session_factory(test_database_url)
+    with mk() as session:
+        job = CrawlJob(
+            seed_url="https://robots.example/seed",
+            normalized_seed_url="https://robots.example/seed",
+            status="queued",
+            same_domain_only=True,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+        before_failed = job.pages_failed
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/plain"},
+                content=b"User-agent: *\nDisallow: /blocked\n",
+            )
+        # We should never fetch HTML for a blocked path.
+        raise AssertionError(f"unexpected fetch {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport,
+        follow_redirects=True,
+        max_redirects=10,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
+        with mk() as session:
+            result = crawl_and_persist_page(
+                session,
+                job_id,
+                "https://robots.example/blocked",
+                http_client=client,
+                settings=Settings(),
+            )
+            session.commit()
+
+    assert result.status == "failed"
+    assert result.error_type == "robots_disallow"
+
+    with mk() as session:
+        job = session.get(CrawlJob, job_id)
+        assert job.pages_failed == before_failed + 1
+        err = session.scalar(select(CrawlError).where(CrawlError.crawl_job_id == job_id))
+        assert err is not None
+        assert err.error_type == "robots_disallow"
 
 
 @pytest.mark.integration

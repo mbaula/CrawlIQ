@@ -241,3 +241,57 @@ def test_index_page_empty_no_postings_token_count_zero(test_database_url: str) -
         assert session.get(Page, page.id).token_count == 0
         assert session.get(Page, page.id).indexed_at is not None
 
+
+@pytest.mark.integration
+def test_index_page_skips_duplicate_content_hash_in_same_job(test_database_url: str) -> None:
+    mk = _mk_session(test_database_url)
+    with mk() as session:
+        job = CrawlJob(
+            seed_url="https://idx-dup.example/",
+            normalized_seed_url="https://idx-dup.example/",
+            status="queued",
+        )
+        session.add(job)
+        session.commit()
+
+        body = "Same extracted text across multiple URLs"
+
+        p1 = Page(
+            crawl_job_id=job.id,
+            url="https://idx-dup.example/a",
+            normalized_url="https://idx-dup.example/a",
+            domain="idx-dup.example",
+            title="Alpha",
+            extracted_text=body,
+            content_hash="samehash",
+            status_code=200,
+            depth=0,
+        )
+        p2 = Page(
+            crawl_job_id=job.id,
+            url="https://idx-dup.example/b",
+            normalized_url="https://idx-dup.example/b",
+            domain="idx-dup.example",
+            title="Beta",
+            extracted_text=body,
+            content_hash="samehash",
+            status_code=200,
+            depth=0,
+        )
+        session.add(p1)
+        session.add(p2)
+        session.commit()
+
+        index_page(session, p1.id)
+        session.commit()
+
+        postings_first = session.scalars(select(InvertedIndex).where(InvertedIndex.page_id == p1.id)).all()
+        assert len(postings_first) > 0
+
+        index_page(session, p2.id)
+        session.commit()
+
+        postings_second = session.scalars(select(InvertedIndex).where(InvertedIndex.page_id == p2.id)).all()
+        assert postings_second == []
+        assert session.get(Page, p2.id).token_count == 0
+
