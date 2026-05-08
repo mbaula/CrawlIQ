@@ -63,7 +63,7 @@ export default async function HomePage() {
   let loadError: string | null = null;
 
   try {
-    [stats, recentJobs] = await Promise.all([getStats(), listCrawlJobs({ limit: 5, offset: 0 })]);
+    [stats, recentJobs] = await Promise.all([getStats(), listCrawlJobs({ limit: 5, offset: 0 }).then((r) => r.items)]);
   } catch (error) {
     loadError = error instanceof Error ? error.message : "Failed to load dashboard data.";
   }

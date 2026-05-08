@@ -47,28 +47,37 @@ def _sample_job() -> CrawlJob:
 
 def test_list_crawl_jobs_empty(client_mock_read_db: tuple[TestClient, MagicMock]) -> None:
     client, mock_session = client_mock_read_db
+    mock_session.scalar.return_value = 0
     mock_session.scalars.return_value.all.return_value = []
     response = client.get("/crawl-jobs")
     assert response.status_code == 200, response.text
-    assert response.json() == []
+    assert response.json() == {"items": [], "limit": 50, "offset": 0, "total": 0}
 
 
 def test_list_crawl_jobs_returns_rows(client_mock_read_db: tuple[TestClient, MagicMock]) -> None:
     client, mock_session = client_mock_read_db
     job = _sample_job()
+    mock_session.scalar.return_value = 1
     mock_session.scalars.return_value.all.return_value = [job]
     response = client.get("/crawl-jobs")
     assert response.status_code == 200, response.text
     data = response.json()
-    assert len(data) == 1
-    assert data[0]["id"] == 1
-    assert data[0]["status"] == "queued"
-    assert data[0]["normalized_seed_url"] == "https://example.com/"
+    assert len(data["items"]) == 1
+    assert data["total"] == 1
+    assert data["items"][0]["id"] == 1
+    assert data["items"][0]["status"] == "queued"
+    assert data["items"][0]["normalized_seed_url"] == "https://example.com/"
 
 
 def test_list_crawl_jobs_limit_validation(client_mock_read_db: tuple[TestClient, MagicMock]) -> None:
     client, _ = client_mock_read_db
     response = client.get("/crawl-jobs?limit=0")
+    assert response.status_code == 422
+
+
+def test_list_crawl_jobs_invalid_status(client_mock_read_db: tuple[TestClient, MagicMock]) -> None:
+    client, _ = client_mock_read_db
+    response = client.get("/crawl-jobs?status=typo")
     assert response.status_code == 422
 
 
@@ -178,7 +187,7 @@ def test_read_endpoints_postgres(
 
             list_resp = test_client.get("/crawl-jobs")
             assert list_resp.status_code == 200
-            ids = {row["id"] for row in list_resp.json()}
+            ids = {row["id"] for row in list_resp.json()["items"]}
             assert job_id in ids
 
             one = test_client.get(f"/crawl-jobs/{job_id}")

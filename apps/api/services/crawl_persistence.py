@@ -109,6 +109,7 @@ def _record_crawl_error(
     status_code: int | None = None,
     content_type: str | None = None,
     retry_count: int = 0,
+    fetch_duration_ms: int | None = None,
 ) -> None:
     err = session.scalar(
         select(CrawlError).where(
@@ -124,6 +125,7 @@ def _record_crawl_error(
         err.status_code = status_code
         err.content_type = content_type
         err.retry_count = int(retry_count)
+        err.fetch_duration_ms = fetch_duration_ms
         err.updated_at = datetime.now(timezone.utc)
     else:
         session.add(
@@ -137,6 +139,7 @@ def _record_crawl_error(
                 status_code=status_code,
                 content_type=content_type,
                 retry_count=int(retry_count),
+                fetch_duration_ms=fetch_duration_ms,
             ),
         )
 
@@ -211,6 +214,7 @@ def crawl_and_persist_page(
             status_code=fetch_out.status_code,
             content_type=fetch_out.content_type,
             retry_count=int(fetch_out.retry_count or 0),
+            fetch_duration_ms=fetch_out.elapsed_ms,
         )
         job.pages_failed = job.pages_failed + 1
         session.flush()
@@ -301,6 +305,7 @@ def crawl_and_persist_page(
         status_code=fetch_out.status_code,
         depth=depth,
         fetched_at=datetime.now(timezone.utc),
+        fetch_duration_ms=int(fetch_out.elapsed_ms),
     )
 
     try:

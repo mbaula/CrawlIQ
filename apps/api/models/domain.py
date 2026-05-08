@@ -82,6 +82,7 @@ class Page(Base):
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    fetch_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
@@ -158,6 +159,7 @@ class CrawlError(Base):
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    fetch_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )

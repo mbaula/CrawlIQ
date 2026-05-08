@@ -24,6 +24,15 @@ class CrawlJobRead(BaseModel):
     error_message: str | None
 
 
+class CrawlJobListRead(BaseModel):
+    """Paginated list for ``GET /crawl-jobs``."""
+
+    items: list[CrawlJobRead]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=200)
+    offset: int = Field(ge=0)
+
+
 class CrawlJobDetailRead(CrawlJobRead):
     """GET ``/crawl-jobs/{id}``: adds dashboard-oriented progress fields."""
 

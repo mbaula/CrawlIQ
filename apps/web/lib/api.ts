@@ -96,10 +96,34 @@ export type CrawlJobRead = {
   error_message: string | null;
 };
 
-export async function listCrawlJobs(params?: { limit?: number; offset?: number }): Promise<CrawlJobRead[]> {
+export type CrawlJobListRead = {
+  items: CrawlJobRead[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type ListCrawlJobsParams = {
+  limit?: number;
+  offset?: number;
+  status?: string;
+  q?: string;
+};
+
+export async function listCrawlJobs(params?: ListCrawlJobsParams): Promise<CrawlJobListRead> {
   const limit = params?.limit ?? 50;
   const offset = params?.offset ?? 0;
-  const response = await fetch(`${getApiBaseUrl()}/crawl-jobs?limit=${limit}&offset=${offset}`, {
+  const url = new URL(`${getApiBaseUrl()}/crawl-jobs`);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("offset", String(offset));
+  if (params?.status) {
+    url.searchParams.set("status", params.status);
+  }
+  const q = params?.q?.trim();
+  if (q) {
+    url.searchParams.set("q", q);
+  }
+  const response = await fetch(url.toString(), {
     method: "GET",
     headers: { "Content-Type": "application/json" },
     cache: "no-store",
@@ -108,7 +132,7 @@ export async function listCrawlJobs(params?: { limit?: number; offset?: number }
     const text = await response.text();
     throw new Error(text || `API error (${response.status})`);
   }
-  return (await response.json()) as CrawlJobRead[];
+  return (await response.json()) as CrawlJobListRead;
 }
 
 export type CrawlJobDetailRead = CrawlJobRead & {
@@ -251,40 +275,65 @@ export type SearchQueryRead = {
   latency_ms: number;
   created_at: string;
 };
+export type HttpStatusClassTotals = {
+  status_2xx: number;
+  status_3xx: number;
+  status_4xx: number;
+  status_5xx: number;
+};
+
+export type DomainFailureCount = {
+  domain: string;
+  failure_count: number;
+};
+
 export type CrawlStatsRead = {
-  // Core counts
-  total_crawl_jobs: number;
+  total_urls_attempted: number;
   total_pages_crawled: number;
   total_pages_indexed: number;
+  pages_pending_indexing: number;
+  skipped_urls_count: number;
+  policy_rejected_urls_count: number;
+  total_skipped_rows: number;
+  fetch_failure_row_count: number;
+  total_crawl_jobs: number;
   total_failures: number;
   failed_url_count: number;
-  // Crawl quality
   crawl_success_rate: number;
   avg_pages_per_job: number;
   avg_crawl_duration_seconds: number | null;
-  // Index health
   index_coverage: number;
   unique_terms: number;
   total_postings: number;
   avg_terms_per_page: number;
+  median_terms_per_page: number;
+  p95_terms_per_page: number;
   largest_page: LargestPageRead | null;
   last_indexed_at: string | null;
-  // Search stats
+  avg_fetch_latency_ms: number | null;
+  p95_fetch_latency_ms: number | null;
   total_searches: number;
   zero_result_searches: number;
   zero_result_rate: number;
   avg_results_per_search: number;
+  searches_hitting_result_cap: number;
   average_search_latency_ms: number;
   p95_search_latency_ms: number;
-  // Lists
+  slowest_search_latency_ms: number | null;
+  slowest_search_query: string | null;
   recent_searches: SearchQueryRead[];
   recent_zero_result_searches: SearchQueryRead[];
   top_queries: QueryCount[];
   top_crawled_domains: DomainCount[];
-  // Failure breakdown
+  skipped_breakdown: ErrorTypeCount[];
+  fetch_failures_breakdown: ErrorTypeCount[];
   failures_by_type: ErrorTypeCount[];
   http_status_distribution: HttpStatusCount[];
+  http_status_class_totals: HttpStatusClassTotals;
   recent_failed_urls: FailedUrlRead[];
+  rate_limited_url_count: number;
+  timeout_fetch_count: number;
+  top_failure_domains: DomainFailureCount[];
 };
 
 export async function getStats(): Promise<CrawlStatsRead> {

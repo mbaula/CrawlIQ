@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, distinct, func, select
+from sqlalchemy import and_, delete, distinct, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -17,6 +17,7 @@ from schemas.crawl_job import (
     CrawlJobCreateRequest,
     CrawlJobCreateResponse,
     CrawlJobDetailRead,
+    CrawlJobListRead,
     CrawlJobRead,
     CrawlJobRetryResponse,
     PageRead,
@@ -25,6 +26,21 @@ from services.queue import enqueue_process_crawl_job
 from services.urlnorm import normalize_seed_url
 
 router = APIRouter(prefix="/crawl-jobs", tags=["crawl-jobs"])
+
+_CRAWL_JOB_STATUSES = frozenset(
+    {"queued", "pending", "running", "completed", "failed", "cancelled"},
+)
+
+
+def _seed_url_ilike(term: str):
+    t = term.strip()
+    if not t:
+        return None
+    pattern = "%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    return or_(
+        CrawlJob.seed_url.ilike(pattern, escape="\\"),
+        CrawlJob.normalized_seed_url.ilike(pattern, escape="\\"),
+    )
 
 
 @router.post("", response_model=CrawlJobCreateResponse)
@@ -106,19 +122,34 @@ def bulk_create_crawl_jobs(
     return CrawlJobBulkCreateResponse(results=results)
 
 
-@router.get("", response_model=list[CrawlJobRead])
+@router.get("", response_model=CrawlJobListRead)
 def list_crawl_jobs(
     db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> list[CrawlJobRead]:
-    stmt = (
-        select(CrawlJob)
-        .order_by(CrawlJob.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-    )
-    return list(db.scalars(stmt).all())
+    status: Annotated[str | None, Query(description="Filter by job status.")] = None,
+    q: Annotated[str | None, Query(description="Substring match on seed URL.", max_length=500)] = None,
+) -> CrawlJobListRead:
+    conditions = []
+    if status is not None:
+        if status not in _CRAWL_JOB_STATUSES:
+            raise HTTPException(status_code=422, detail=f"invalid status: {status!r}")
+        conditions.append(CrawlJob.status == status)
+    seed_filter = _seed_url_ilike(q or "")
+    if seed_filter is not None:
+        conditions.append(seed_filter)
+
+    where_clause = and_(*conditions) if conditions else None
+    count_stmt = select(func.count()).select_from(CrawlJob)
+    list_stmt = select(CrawlJob).order_by(CrawlJob.created_at.desc())
+    if where_clause is not None:
+        count_stmt = count_stmt.where(where_clause)
+        list_stmt = list_stmt.where(where_clause)
+    list_stmt = list_stmt.offset(offset).limit(limit)
+
+    total = int(db.scalar(count_stmt) or 0)
+    items = [CrawlJobRead.model_validate(j) for j in db.scalars(list_stmt).all()]
+    return CrawlJobListRead(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/{job_id}", response_model=CrawlJobDetailRead)

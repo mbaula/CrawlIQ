@@ -10,31 +10,20 @@ from db.session import get_db
 from main import app
 
 
-def test_stats_endpoint_returns_payload(monkeypatch) -> None:
+def test_stats_endpoint_returns_payload() -> None:
     mock_session = MagicMock()
 
-    execute_jobs = MagicMock()
-    execute_jobs.one.return_value = (0, 0, 0, 0)
-    # `GET /stats` uses `execute()` several times; return safe empty results.
-    def _execute(stmt):
-        r = MagicMock()
-        # Core job stats query uses `.one()`
-        r.one.return_value = (0, 0, 0, 0)
-        # Avg duration query uses `.scalar()`
-        r.scalar.return_value = None
-        # Largest page query uses `.first()`
-        r.first.return_value = None
-        # Top queries / domains / failures / http statuses / failed urls use `.all()`
-        r.all.return_value = []
-        return r
+    exec_result = MagicMock()
+    exec_result.one.side_effect = [
+        (0,),  # job count
+        (0, 0, 0, 0),  # search stats row
+    ]
+    exec_result.scalar.return_value = None
+    exec_result.first.return_value = None
+    exec_result.all.return_value = []
+    mock_session.execute.return_value = exec_result
+    mock_session.scalar.return_value = 0
 
-    mock_session.execute.side_effect = _execute
-
-    # scalars are used for: failed_url_count, unique_terms, total_postings, avg_terms_result,
-    # last_indexed_at, p95_result
-    mock_session.scalar.side_effect = [0, 0, 0, 0, None, 0]
-
-    # recent searches
     mock_session.scalars.return_value.all.return_value = []
 
     def _get_db():
@@ -48,11 +37,21 @@ def test_stats_endpoint_returns_payload(monkeypatch) -> None:
             body = resp.json()
             assert body["total_crawl_jobs"] == 0
             assert body["total_pages_crawled"] == 0
-            assert body["total_pages_indexed"] == 0
-            assert body["total_failures"] == 0
-            assert body["failed_url_count"] == 0
+            assert body["total_urls_attempted"] == 0
+            assert body["median_terms_per_page"] == 0.0
+            assert body["http_status_class_totals"]["status_2xx"] == 0
             assert body["recent_searches"] == []
             assert body["top_crawled_domains"] == []
     finally:
         app.dependency_overrides.clear()
 
+
+def test_http_class_totals_buckets() -> None:
+    from routers.stats import _http_class_totals
+
+    rows = [(200, 3), (301, 1), (404, 5), (500, 2)]
+    t = _http_class_totals(rows)
+    assert t.status_2xx == 3
+    assert t.status_3xx == 1
+    assert t.status_4xx == 5
+    assert t.status_5xx == 2
