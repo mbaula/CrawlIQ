@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     crawl_default_max_pages: int = 100
     crawl_default_max_depth: int = 2
     crawl_request_timeout_seconds: int = 10
+    # RQ kills jobs that exceed their timeout. Default timeout is 1 hour for large crawls
+    # (300 pages * 1s delay = 5 min minimum, plus fetch/parse/index time).
+    crawl_job_timeout_seconds: int = Field(default=3600, ge=1, le=86_400)
     crawl_domain_delay_seconds: int = 1
     # Empty string → built-in default in ``fetch_html`` (see ``DEFAULT_HTTP_USER_AGENT``).
     crawl_http_user_agent: str = ""

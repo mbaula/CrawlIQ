@@ -46,6 +46,39 @@ export async function createCrawlJob(body: CrawlJobCreateRequest): Promise<Crawl
   return (await response.json()) as CrawlJobCreateResponse;
 }
 
+export type CrawlJobBulkCreateRequest = {
+  seed_urls: string[];
+  max_pages: number;
+  max_depth: number;
+  same_domain_only: boolean;
+};
+
+export type CrawlJobBulkCreateItem = {
+  seed_url: string;
+  ok: boolean;
+  job: CrawlJobCreateResponse | null;
+  error: string | null;
+};
+
+export type CrawlJobBulkCreateResponse = {
+  results: CrawlJobBulkCreateItem[];
+};
+
+export async function bulkCreateCrawlJobs(body: CrawlJobBulkCreateRequest): Promise<CrawlJobBulkCreateResponse> {
+  const response = await fetch(`${getApiBaseUrl()}/crawl-jobs/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `API error (${response.status})`);
+  }
+
+  return (await response.json()) as CrawlJobBulkCreateResponse;
+}
+
 export type CrawlJobRead = {
   id: number;
   seed_url: string;
@@ -143,6 +176,19 @@ export async function listCrawlJobErrors(jobId: number): Promise<CrawlErrorRead[
 
 export async function cancelCrawlJob(jobId: number): Promise<CrawlJobDetailRead> {
   return await fetchJsonOrThrow<CrawlJobDetailRead>(`${getApiBaseUrl()}/crawl-jobs/${jobId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export type CrawlJobRetryResponse = {
+  id: number;
+  status: string;
+  enqueued: boolean;
+};
+
+export async function retryCrawlJob(jobId: number): Promise<CrawlJobRetryResponse> {
+  return await fetchJsonOrThrow<CrawlJobRetryResponse>(`${getApiBaseUrl()}/crawl-jobs/${jobId}/retry`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });

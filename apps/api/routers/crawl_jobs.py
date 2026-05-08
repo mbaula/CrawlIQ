@@ -2,7 +2,7 @@ from typing import Annotated
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import distinct, func, select
+from sqlalchemy import delete, distinct, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -10,10 +10,14 @@ from db.session import get_db
 from models.domain import CrawlError, CrawlJob, Page, PageLink
 from schemas.crawl_job import (
     CrawlErrorRead,
+    CrawlJobBulkCreateRequest,
+    CrawlJobBulkCreateResponse,
+    CrawlJobBulkCreateItem,
     CrawlJobCreateRequest,
     CrawlJobCreateResponse,
     CrawlJobDetailRead,
     CrawlJobRead,
+    CrawlJobRetryResponse,
     PageRead,
 )
 from services.queue import enqueue_process_crawl_job
@@ -50,6 +54,55 @@ def create_crawl_job(
     except (OSError, redis.exceptions.RedisError):
         enqueued = False
     return CrawlJobCreateResponse.model_validate(job).model_copy(update={"enqueued": enqueued})
+
+
+@router.post("/bulk", response_model=CrawlJobBulkCreateResponse)
+def bulk_create_crawl_jobs(
+    body: CrawlJobBulkCreateRequest,
+    db: Session = Depends(get_db),
+) -> CrawlJobBulkCreateResponse:
+    results: list[CrawlJobBulkCreateItem] = []
+
+    for seed_url in body.seed_urls:
+        seed = str(seed_url).strip()
+        try:
+            normalized = normalize_seed_url(seed)
+        except ValueError as exc:
+            results.append(CrawlJobBulkCreateItem(seed_url=seed, ok=False, error=str(exc)))
+            continue
+
+        job = CrawlJob(
+            seed_url=seed,
+            normalized_seed_url=normalized,
+            status="queued",
+            max_pages=body.max_pages,
+            max_depth=body.max_depth,
+            same_domain_only=body.same_domain_only,
+        )
+
+        try:
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+        except (SQLAlchemyError, OSError) as exc:
+            results.append(CrawlJobBulkCreateItem(seed_url=seed, ok=False, error=str(exc)))
+            continue
+
+        enqueued = True
+        try:
+            enqueue_process_crawl_job(job.id)
+        except (OSError, redis.exceptions.RedisError):
+            enqueued = False
+
+        results.append(
+            CrawlJobBulkCreateItem(
+                seed_url=seed,
+                ok=True,
+                job=CrawlJobCreateResponse.model_validate(job).model_copy(update={"enqueued": enqueued}),
+            )
+        )
+
+    return CrawlJobBulkCreateResponse(results=results)
 
 
 @router.get("", response_model=list[CrawlJobRead])
@@ -155,3 +208,39 @@ def cancel_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobDeta
     payload["pages_discovered"] = pages_discovered
     payload["crawl_progress"] = crawl_progress
     return CrawlJobDetailRead(**payload)
+
+
+@router.post("/{job_id}/retry", response_model=CrawlJobRetryResponse)
+def retry_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobRetryResponse:
+    job = db.get(CrawlJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    if job.status != "failed":
+        raise HTTPException(status_code=409, detail=f"cannot retry job in status '{job.status}'")
+
+    # Reset the job and clear prior crawl artifacts so the frontier can run again.
+    try:
+        db.execute(delete(PageLink).where(PageLink.crawl_job_id == job_id))
+        db.execute(delete(CrawlError).where(CrawlError.crawl_job_id == job_id))
+        db.execute(delete(Page).where(Page.crawl_job_id == job_id))
+
+        job.pages_crawled = 0
+        job.pages_indexed = 0
+        job.pages_failed = 0
+        job.error_message = None
+        job.started_at = None
+        job.finished_at = None
+        job.status = "queued"
+
+        db.commit()
+        db.refresh(job)
+    except (SQLAlchemyError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    enqueued = True
+    try:
+        enqueue_process_crawl_job(job.id)
+    except (OSError, redis.exceptions.RedisError):
+        enqueued = False
+
+    return CrawlJobRetryResponse.model_validate(job).model_copy(update={"enqueued": enqueued})

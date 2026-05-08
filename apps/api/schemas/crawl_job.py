@@ -91,3 +91,29 @@ class CrawlJobCreateResponse(BaseModel):
     same_domain_only: bool
     created_at: datetime
     enqueued: bool = True
+
+
+class CrawlJobBulkCreateRequest(BaseModel):
+    seed_urls: list[HttpUrl] = Field(min_length=1, max_length=500)
+    max_pages: int = Field(ge=1, le=10_000)
+    max_depth: int = Field(ge=0, le=10)
+    same_domain_only: bool = True
+
+
+class CrawlJobBulkCreateItem(BaseModel):
+    seed_url: str
+    ok: bool
+    job: CrawlJobCreateResponse | None = None
+    error: str | None = None
+
+
+class CrawlJobBulkCreateResponse(BaseModel):
+    results: list[CrawlJobBulkCreateItem]
+
+
+class CrawlJobRetryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    enqueued: bool = True

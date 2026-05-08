@@ -31,12 +31,13 @@ def enqueue_ping_job(message: str = "ping") -> str:
     does not need a copy of ``jobs.py``).
     """
     q = get_default_queue()
-    job = q.enqueue(_PING_JOB, message)
+    job = q.enqueue_call(_PING_JOB, args=(message,))
     return job.get_id()
 
 
 def enqueue_process_crawl_job(crawl_job_id: int) -> str:
     """Enqueue ``jobs.process_crawl_job`` for the given crawl job primary key."""
     q = get_default_queue()
-    job = q.enqueue(_PROCESS_CRAWL_JOB, crawl_job_id)
+    timeout_seconds = int(get_settings().crawl_job_timeout_seconds)
+    job = q.enqueue_call(_PROCESS_CRAWL_JOB, args=(crawl_job_id,), timeout=timeout_seconds)
     return job.get_id()

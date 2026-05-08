@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+import time
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from crawliq_core.tokenize import tokenize
@@ -23,6 +26,49 @@ def _tf_map(*, title: str | None, body: str | None, title_weight: int) -> tuple[
         for t in title_tokens:
             counts[t] += title_weight
     return dict(counts), token_count
+
+
+def _get_or_create_term_ids(session: Session, terms: list[str]) -> dict[str, int]:
+    """
+    Concurrency-safe term id allocation.
+
+    Uses INSERT..ON CONFLICT DO NOTHING to avoid deadlocks when multiple workers
+    race to create the same term rows.
+    """
+    if not terms:
+        return {}
+
+    unique_terms = sorted(set(terms))
+
+    # Insert any missing terms without raising on unique constraint races.
+    stmt = (
+        pg_insert(Term)
+        .values([{"term": t, "document_frequency": 0} for t in unique_terms])
+        .on_conflict_do_nothing(index_elements=[Term.__table__.c.term])
+        .returning(Term.__table__.c.term, Term.__table__.c.id)
+    )
+    inserted = dict(session.execute(stmt).all())
+
+    missing = [t for t in unique_terms if t not in inserted]
+    if not missing:
+        return inserted
+
+    existing = dict(session.execute(select(Term.term, Term.id).where(Term.term.in_(missing))).all())
+    return {**existing, **inserted}
+
+
+def _with_deadlock_retry(fn, *, max_attempts: int = 5):
+    # We retry a few times on Postgres deadlocks (40P01). This is expected under
+    # high concurrency, and safe here because the whole operation is idempotent
+    # within the surrounding transaction.
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except OperationalError as e:
+            pgcode = getattr(getattr(e, "orig", None), "pgcode", None)
+            if pgcode != "40P01" or attempt >= (max_attempts - 1):
+                raise
+            time.sleep(0.05 * (2**attempt))
 
 
 def index_page(session: Session, page_id: int, *, title_weight: int = 3) -> None:
@@ -82,20 +128,15 @@ def index_page(session: Session, page_id: int, *, title_weight: int = 3) -> None
     )
 
     if tf:
-        existing = session.scalars(select(Term).where(Term.term.in_(list(tf.keys())))).all()
-        by_term = {t.term: t for t in existing}
+        terms = list(tf.keys())
 
-        term_ids: dict[str, int] = {}
-        for term in tf.keys():
-            row = by_term.get(term)
-            if row is None:
-                row = Term(term=term, document_frequency=0)
-                session.add(row)
-                session.flush()  # allocate id
-                by_term[term] = row
-            term_ids[term] = row.id
+        term_ids = _with_deadlock_retry(lambda: _get_or_create_term_ids(session, terms))
+        by_term = {
+            t.term: t
+            for t in session.scalars(select(Term).where(Term.term.in_(terms))).all()
+        }
 
-        for term in tf.keys():
+        for term in terms:
             by_term[term].document_frequency = (by_term[term].document_frequency or 0) + 1
 
         session.add_all(

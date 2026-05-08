@@ -14,16 +14,21 @@ def client_mock_db(monkeypatch: pytest.MonkeyPatch):
     state: dict = {}
 
     class FakeSession:
+        _next_id = 1
+
         def add(self, obj: object) -> None:
-            state["job"] = obj
+            state.setdefault("jobs", []).append(obj)
 
         def commit(self) -> None:
-            job = state["job"]
-            job.id = 1
-            job.pages_crawled = 0
-            job.pages_indexed = 0
-            job.pages_failed = 0
-            job.created_at = datetime.now(timezone.utc)
+            jobs = state.get("jobs", [])
+            for job in jobs:
+                if getattr(job, "id", None) is None:
+                    job.id = FakeSession._next_id
+                    FakeSession._next_id += 1
+                job.pages_crawled = getattr(job, "pages_crawled", 0) or 0
+                job.pages_indexed = getattr(job, "pages_indexed", 0) or 0
+                job.pages_failed = getattr(job, "pages_failed", 0) or 0
+                job.created_at = getattr(job, "created_at", None) or datetime.now(timezone.utc)
 
         def refresh(self, obj: object) -> None:
             pass
@@ -187,3 +192,56 @@ def test_post_crawl_job_enqueue_redis_failure_sets_enqueued_false(
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "queued"
     assert response.json().get("enqueued") is False
+
+
+def test_post_crawl_job_bulk_created(client_mock_db: TestClient) -> None:
+    response = client_mock_db.post(
+        "/crawl-jobs/bulk",
+        json={
+            "seed_urls": [
+                "https://fastapi.tiangolo.com/",
+                "https://example.org/",
+            ],
+            "max_pages": 10,
+            "max_depth": 1,
+            "same_domain_only": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "results" in body
+    assert len(body["results"]) == 2
+    assert all(item["ok"] is True for item in body["results"])
+    assert all(item["job"] for item in body["results"])
+
+
+def test_post_crawl_job_bulk_partial_failure_reports_item_error(
+    client_mock_db: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services import urlnorm
+
+    real = urlnorm.normalize_seed_url
+
+    def _selective(value: str) -> str:
+        if "example.org" in value:
+            raise ValueError("rejected by policy")
+        return real(value)
+
+    monkeypatch.setattr("routers.crawl_jobs.normalize_seed_url", _selective)
+
+    response = client_mock_db.post(
+        "/crawl-jobs/bulk",
+        json={
+            "seed_urls": [
+                "https://fastapi.tiangolo.com/",
+                "https://example.org/",
+            ],
+            "max_pages": 10,
+            "max_depth": 1,
+            "same_domain_only": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert len(results) == 2
+    assert any(item["ok"] is False and "rejected" in (item["error"] or "") for item in results)

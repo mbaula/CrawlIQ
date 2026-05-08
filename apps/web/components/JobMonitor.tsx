@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
-import { cancelCrawlJob, getCrawlJob, listCrawlJobErrors, listCrawlJobPages, type CrawlJobDetailRead, type CrawlErrorRead, type PageRead } from "@/lib/api";
+import { cancelCrawlJob, getCrawlJob, listCrawlJobErrors, listCrawlJobPages, retryCrawlJob, type CrawlJobDetailRead, type CrawlErrorRead, type PageRead } from "@/lib/api";
 
 type Props = {
   jobId: number;
@@ -55,6 +55,7 @@ export function JobMonitor({ jobId }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   const shouldPoll = useMemo(() => (job ? isRunningStatus(job.status) : true), [job]);
 
@@ -75,6 +76,20 @@ export function JobMonitor({ jobId }: Props) {
       setLoadError(err instanceof Error ? err.message : "Failed to cancel job.");
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function onRetry() {
+    if (!job || job.status !== "failed") return;
+    setRetrying(true);
+    setLoadError(null);
+    try {
+      await retryCrawlJob(jobId);
+      await loadAll();
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Failed to retry job.");
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -161,13 +176,19 @@ export function JobMonitor({ jobId }: Props) {
                   </button>
                   <span className="text-xs text-muted">Stops crawling between pages.</span>
                 </>
+              ) : job.status === "failed" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={retrying}
+                    className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-amber-700 transition-colors hover:border-amber-500 dark:text-amber-300 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {retrying ? "Retrying…" : "Retry job"}
+                  </button>
+                  <span className="text-xs text-muted">Re-queues and restarts this crawl from scratch.</span>
+                </>
               ) : null}
-              <Link
-                href={`/jobs/${jobId}/graph`}
-                className="rounded border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-accent transition-colors hover:border-accent"
-              >
-                View graph
-              </Link>
             </div>
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
@@ -322,15 +343,6 @@ export function JobMonitor({ jobId }: Props) {
           </Link>
         </span>
         <span className="text-rule">|</span>
-        <span>
-          Visualize with{" "}
-          <Link
-            className="text-accent underline decoration-rule underline-offset-4 hover:decoration-accent"
-            href={`/jobs/${jobId}/graph`}
-          >
-            /graph
-          </Link>
-        </span>
       </div>
     </section>
   );

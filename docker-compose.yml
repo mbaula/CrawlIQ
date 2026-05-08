@@ -42,6 +42,7 @@ services:
       CRAWL_DEFAULT_MAX_DEPTH: ${CRAWL_DEFAULT_MAX_DEPTH:-2}
       CRAWL_REQUEST_TIMEOUT_SECONDS: ${CRAWL_REQUEST_TIMEOUT_SECONDS:-10}
       CRAWL_DOMAIN_DELAY_SECONDS: ${CRAWL_DOMAIN_DELAY_SECONDS:-1}
+      CRAWL_JOB_TIMEOUT_SECONDS: ${CRAWL_JOB_TIMEOUT_SECONDS:-3600}
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,6 +75,9 @@ services:
       CRAWL_DEFAULT_MAX_DEPTH: ${CRAWL_DEFAULT_MAX_DEPTH:-2}
       CRAWL_REQUEST_TIMEOUT_SECONDS: ${CRAWL_REQUEST_TIMEOUT_SECONDS:-10}
       CRAWL_DOMAIN_DELAY_SECONDS: ${CRAWL_DOMAIN_DELAY_SECONDS:-1}
+      CRAWL_JOB_TIMEOUT_SECONDS: ${CRAWL_JOB_TIMEOUT_SECONDS:-3600}
+    # Give workers time to mark jobs as failed on shutdown
+    stop_grace_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,6 +130,11 @@ services:
         "npm install && exec npm run dev -- -H 0.0.0.0 -p 3000",
       ]
 
+# Optional named volumes for persistence.
 volumes:
   postgres_data:
+    # Pin the actual Docker volume name so the DB persists even if the
+    # Compose "project name" changes (Docker Desktop vs CLI, different folders, etc.).
+    # Set POSTGRES_VOLUME_NAME to reuse an existing volume (e.g. an older stack).
+    name: ${POSTGRES_VOLUME_NAME:-crawliq_postgres_data}
   web_dev_node_modules:
