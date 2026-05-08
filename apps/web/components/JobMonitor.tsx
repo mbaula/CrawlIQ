@@ -148,19 +148,27 @@ export function JobMonitor({ jobId }: Props) {
               <StatusBadge status={job.status} />
               {shouldPoll ? <span className="font-mono text-[10px] uppercase tracking-widest text-muted">live</span> : null}
             </div>
-            {isRunningStatus(job.status) ? (
-              <div className="mt-4 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={onCancel}
-                  disabled={cancelling}
-                  className="rounded border border-danger/40 bg-danger/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-danger transition-colors hover:border-danger disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {cancelling ? "Cancelling…" : "Cancel job"}
-                </button>
-                <span className="text-xs text-muted">Stops crawling between pages.</span>
-              </div>
-            ) : null}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {isRunningStatus(job.status) ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    disabled={cancelling}
+                    className="rounded border border-danger/40 bg-danger/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-danger transition-colors hover:border-danger disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {cancelling ? "Cancelling…" : "Cancel job"}
+                  </button>
+                  <span className="text-xs text-muted">Stops crawling between pages.</span>
+                </>
+              ) : null}
+              <Link
+                href={`/jobs/${jobId}/graph`}
+                className="rounded border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-accent transition-colors hover:border-accent"
+              >
+                View graph
+              </Link>
+            </div>
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
             <div>
@@ -303,16 +311,27 @@ export function JobMonitor({ jobId }: Props) {
         )}
       </section>
 
-      <p className="text-xs text-muted">
-        Tip: search this crawl with{" "}
-        <Link
-          className="text-accent underline decoration-rule underline-offset-4 hover:decoration-accent"
-          href={`/search?job_id=${jobId}`}
-        >
-          /search
-        </Link>
-        .
-      </p>
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted">
+        <span>
+          Tip: search this crawl with{" "}
+          <Link
+            className="text-accent underline decoration-rule underline-offset-4 hover:decoration-accent"
+            href={`/search?job_id=${jobId}`}
+          >
+            /search
+          </Link>
+        </span>
+        <span className="text-rule">|</span>
+        <span>
+          Visualize with{" "}
+          <Link
+            className="text-accent underline decoration-rule underline-offset-4 hover:decoration-accent"
+            href={`/jobs/${jobId}/graph`}
+          >
+            /graph
+          </Link>
+        </span>
+      </div>
     </section>
   );
 }

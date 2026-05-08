@@ -16,8 +16,6 @@ RUN rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY packages /packages
-
 COPY apps/api/requirements.txt ./requirements-api.txt
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
@@ -32,6 +30,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
         --retries 10 \
         --timeout 120 \
         -r requirements-api.txt
+
+# Shared crawl package (import as ``crawliq_core`` via PYTHONPATH=/packages).
+# Copied after pip install so edits to shared code don't invalidate the dep layer.
+COPY packages /packages
 
 COPY apps/api/db ./db
 COPY apps/api/models ./models

@@ -184,6 +184,21 @@ export async function searchPages(params: {
 }
 
 export type DomainCount = { domain: string; page_count: number };
+export type ErrorTypeCount = { error_type: string; count: number };
+export type HttpStatusCount = { status_code: number; count: number };
+export type QueryCount = { query: string; count: number };
+export type FailedUrlRead = {
+  url: string;
+  error_type: string;
+  error_message: string | null;
+  created_at: string;
+};
+export type LargestPageRead = {
+  page_id: number;
+  url: string;
+  title: string | null;
+  token_count: number;
+};
 export type SearchQueryRead = {
   query: string;
   result_count: number;
@@ -191,14 +206,39 @@ export type SearchQueryRead = {
   created_at: string;
 };
 export type CrawlStatsRead = {
+  // Core counts
   total_crawl_jobs: number;
   total_pages_crawled: number;
   total_pages_indexed: number;
   total_failures: number;
   failed_url_count: number;
+  // Crawl quality
+  crawl_success_rate: number;
+  avg_pages_per_job: number;
+  avg_crawl_duration_seconds: number | null;
+  // Index health
+  index_coverage: number;
+  unique_terms: number;
+  total_postings: number;
+  avg_terms_per_page: number;
+  largest_page: LargestPageRead | null;
+  last_indexed_at: string | null;
+  // Search stats
+  total_searches: number;
+  zero_result_searches: number;
+  zero_result_rate: number;
+  avg_results_per_search: number;
   average_search_latency_ms: number;
+  p95_search_latency_ms: number;
+  // Lists
   recent_searches: SearchQueryRead[];
+  recent_zero_result_searches: SearchQueryRead[];
+  top_queries: QueryCount[];
   top_crawled_domains: DomainCount[];
+  // Failure breakdown
+  failures_by_type: ErrorTypeCount[];
+  http_status_distribution: HttpStatusCount[];
+  recent_failed_urls: FailedUrlRead[];
 };
 
 export async function getStats(): Promise<CrawlStatsRead> {

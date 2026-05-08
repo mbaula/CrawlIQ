@@ -281,12 +281,17 @@ def search_indexed_pages(
     Run BM25 search and return rows suitable for ``SearchResponse``.
 
     Each dict has keys: page_id, title, url, score, snippet, matched_terms (sorted list).
+
+    When searching across all jobs (crawl_job_id is None), results are deduplicated
+    by URL, keeping the highest-scoring result for each unique URL.
     """
+    fetch_limit = result_limit if crawl_job_id is not None else result_limit * 5
+
     ranked_pages, _ = execute_search(
         session,
         raw_query=raw_query,
         crawl_job_id=crawl_job_id,
-        result_limit=result_limit,
+        result_limit=fetch_limit,
     )
     if not ranked_pages:
         return []
@@ -296,10 +301,17 @@ def search_indexed_pages(
     page_by_id = {p.id: p for p in pages}
 
     ordered_rows: list[dict] = []
+    seen_urls: set[str] = set()
+
     for ranked in ranked_pages:
         page = page_by_id.get(ranked.page_id)
         if page is None:
             continue
+
+        if crawl_job_id is None and page.url in seen_urls:
+            continue
+        seen_urls.add(page.url)
+
         matched = sorted(ranked.matched_terms)
         snippet = _strip_repeated_ws(
             _build_snippet(
@@ -318,5 +330,8 @@ def search_indexed_pages(
                 "matched_terms": matched,
             },
         )
+
+        if len(ordered_rows) >= result_limit:
+            break
 
     return ordered_rows

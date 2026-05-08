@@ -1,33 +1,11 @@
 import type { Metadata } from "next";
 import { Fragment, type ReactNode } from "react";
-import { IBM_Plex_Mono, IBM_Plex_Sans, Newsreader } from "next/font/google";
 
 import { TopNav } from "@/components/TopNav";
 import { getApiBaseUrl } from "@/lib/api";
 
 import { Providers } from "./providers";
 import "./globals.css";
-
-const serif = Newsreader({
-  subsets: ["latin"],
-  weight: ["400", "600", "700"],
-  variable: "--font-serif",
-  display: "swap",
-});
-
-const sans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-sans",
-  display: "swap",
-});
-
-const mono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: {
@@ -45,7 +23,15 @@ export default function RootLayout({
   const apiBase = getApiBaseUrl();
 
   return (
-    <html lang="en" suppressHydrationWarning className={`${serif.variable} ${sans.variable} ${mono.variable}`}>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:wght@400;600;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="font-sans">
         <Providers>
           <Fragment>

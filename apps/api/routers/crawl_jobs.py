@@ -134,6 +134,7 @@ def cancel_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobDeta
         raise HTTPException(status_code=409, detail=f"cannot cancel job in status '{job.status}'")
 
     job.status = "cancelled"
+    job.finished_at = func.now()
     try:
         db.commit()
         db.refresh(job)

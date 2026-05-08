@@ -3,6 +3,9 @@
 @tailwind utilities;
 
 :root {
+  --font-serif: "Newsreader", Georgia, serif;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --paper-rgb: 244 241 234;
   --ink-rgb: 26 25 23;
   --muted-rgb: 92 90 86;

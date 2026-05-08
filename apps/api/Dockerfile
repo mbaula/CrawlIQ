@@ -10,9 +10,6 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /app
 
-# Shared crawl package (import as ``crawliq_core``).
-COPY packages /packages
-
 # Fresh CA bundle + current pip (fewer TLS / middlebox issues on some networks).
 RUN rm -rf /var/lib/apt/lists/* \
     && apt-get update \
@@ -37,6 +34,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
         --retries 10 \
         --timeout 120 \
         -r requirements.txt
+
+# Shared crawl package (import as ``crawliq_core`` via PYTHONPATH=/packages).
+# Copied after pip install so edits to shared code don't invalidate the dep layer.
+COPY packages /packages
 
 COPY apps/api/alembic.ini ./
 COPY apps/api/alembic ./alembic

@@ -29,6 +29,9 @@ _SKIP_SCHEMES = frozenset({"mailto", "tel", "javascript", "data"})
 
 def _should_remove_by_attrs(tag: Tag) -> bool:
     """Remove elements with navigation-related roles, aria-labels, or class/id names."""
+    if getattr(tag, "attrs", None) is None:
+        return False
+
     role = tag.get("role", "")
     if isinstance(role, str) and role.lower() == "navigation":
         return True
@@ -77,7 +80,12 @@ def _extract_text(soup: BeautifulSoup) -> str:
         tag.decompose()
 
     for tag in list(soup.find_all(True)):
-        if isinstance(tag, Tag) and _should_remove_by_attrs(tag):
+        if not isinstance(tag, Tag):
+            continue
+        # Tag may have been decomposed earlier when its ancestor was removed.
+        if getattr(tag, "attrs", None) is None or tag.parent is None:
+            continue
+        if _should_remove_by_attrs(tag):
             tag.decompose()
 
     raw = soup.get_text(separator=" ", strip=True)
