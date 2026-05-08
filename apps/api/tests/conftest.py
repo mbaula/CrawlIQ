@@ -13,13 +13,16 @@ def test_database_url() -> str:
 
 
 @pytest.fixture(autouse=True)
-def _reset_database_between_integration_tests(request: pytest.FixtureRequest, test_database_url: str) -> None:
+def _reset_database_between_integration_tests(request: pytest.FixtureRequest) -> None:
     """
     Integration tests share a real Postgres database. To keep tests independent and
     deterministic, truncate all application tables between tests.
     """
     if request.node.get_closest_marker("integration") is None:
         return
+
+    # Only integration tests should require a live database.
+    test_database_url: str = request.getfixturevalue("test_database_url")
 
     # Ensure we use psycopg (v3) which is already a project dependency.
     url = test_database_url

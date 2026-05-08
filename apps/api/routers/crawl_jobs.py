@@ -1,4 +1,5 @@
 from typing import Annotated
+from datetime import datetime, timezone
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -187,7 +188,9 @@ def cancel_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobDeta
         raise HTTPException(status_code=409, detail=f"cannot cancel job in status '{job.status}'")
 
     job.status = "cancelled"
-    job.finished_at = func.now()
+    # Use an actual datetime value so the in-memory ORM object is valid immediately
+    # (important for API responses and unit tests that use mocked sessions).
+    job.finished_at = datetime.now(timezone.utc)
     try:
         db.commit()
         db.refresh(job)

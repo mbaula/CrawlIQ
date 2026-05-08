@@ -15,12 +15,24 @@ def test_stats_endpoint_returns_payload(monkeypatch) -> None:
 
     execute_jobs = MagicMock()
     execute_jobs.one.return_value = (0, 0, 0, 0)
-    execute_domains = MagicMock()
-    execute_domains.all.return_value = []
-    mock_session.execute.side_effect = [execute_jobs, execute_domains]
+    # `GET /stats` uses `execute()` several times; return safe empty results.
+    def _execute(stmt):
+        r = MagicMock()
+        # Core job stats query uses `.one()`
+        r.one.return_value = (0, 0, 0, 0)
+        # Avg duration query uses `.scalar()`
+        r.scalar.return_value = None
+        # Largest page query uses `.first()`
+        r.first.return_value = None
+        # Top queries / domains / failures / http statuses / failed urls use `.all()`
+        r.all.return_value = []
+        return r
 
-    # failed_url_count, avg_latency
-    mock_session.scalar.side_effect = [0, 0]
+    mock_session.execute.side_effect = _execute
+
+    # scalars are used for: failed_url_count, unique_terms, total_postings, avg_terms_result,
+    # last_indexed_at, p95_result
+    mock_session.scalar.side_effect = [0, 0, 0, 0, None, 0]
 
     # recent searches
     mock_session.scalars.return_value.all.return_value = []
