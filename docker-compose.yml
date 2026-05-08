@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: crawliq
-      POSTGRES_PASSWORD: crawliq
+      POSTGRES_PASSWORD: crawliq_dev
       POSTGRES_DB: crawliq
     ports:
       - "${POSTGRES_PORT:-5432}:5432"

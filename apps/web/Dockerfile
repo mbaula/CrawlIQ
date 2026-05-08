@@ -12,8 +12,7 @@ RUN npm config set registry "${NPM_CONFIG_REGISTRY}" \
     && npm config set fetch-retry-mintimeout 20000 \
     && npm config set fetch-retry-maxtimeout 120000 \
     && if [ "${NPM_STRICT_SSL}" = "false" ]; then npm config set strict-ssl false; fi \
-    && npm ci \
-    && npm install @next/swc-linux-x64-gnu @next/swc-linux-x64-musl --save-optional --ignore-scripts
+    && npm ci
 
 FROM node:20-bookworm-slim AS builder
 WORKDIR /app
@@ -23,7 +22,6 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NEXT_PRIVATE_SKIP_DOWNLOAD=1
 
 RUN npm run build
 

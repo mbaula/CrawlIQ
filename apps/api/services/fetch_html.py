@@ -1,4 +1,10 @@
-"""HTTP HTML fetch: sync ``httpx``, retries, timeouts, strict ``text/html``."""
+"""HTTP fetch for indexable text-like documents.
+
+Applies an optional per-domain minimum delay (``crawl_domain_delay_seconds``).
+Retries transient failures with simple backoff.
+
+Supports multiple indexable MIME types (HTML/XHTML/Markdown/plain text).
+"""
 
 from __future__ import annotations
 
@@ -28,8 +34,30 @@ def _mime_without_params(content_type: str | None) -> str | None:
     return content_type.split(";")[0].strip().lower() or None
 
 
-def _is_html_content_type(content_type: str | None) -> bool:
-    return _mime_without_params(content_type) == "text/html"
+def _is_indexable_text_mime(content_type: str | None) -> bool:
+    mime = _mime_without_params(content_type)
+    return mime in {
+        "text/html",
+        "application/xhtml+xml",
+        "text/plain",
+        "text/markdown",
+        "text/x-markdown",
+    }
+
+
+def _is_obvious_binary_mime(content_type: str | None) -> bool:
+    mime = _mime_without_params(content_type) or ""
+    if mime.startswith("image/"):
+        return True
+    if mime.startswith("audio/") or mime.startswith("video/"):
+        return True
+    return mime in {
+        "application/zip",
+        "application/octet-stream",
+        "application/pdf",
+        "application/x-tar",
+        "application/gzip",
+    }
 
 
 def _domain_key(raw_url: str) -> str | None:
@@ -66,12 +94,11 @@ def fetch_html(
     client: httpx.Client | None = None,
 ) -> FetchHtmlSuccess | FetchHtmlFailure:
     """
-    GET ``url`` and return decoded HTML or a structured failure.
+    GET ``url`` and return decoded body or a structured failure.
 
     * Sync ``httpx.Client``: redirect following enabled with a max redirect count.
     * Timeout from ``crawl_request_timeout_seconds``.
     * ``User-Agent`` from ``crawl_http_user_agent`` or built-in default.
-    * Only **200** responses with ``Content-Type`` MIME ``text/html`` yield success.
     * Response body size capped by ``crawl_max_response_bytes``.
     """
     raw = url.strip()
@@ -90,11 +117,15 @@ def fetch_html(
     max_bytes = s.crawl_max_response_bytes
     domain_delay_seconds = float(s.crawl_domain_delay_seconds)
 
-    headers = {"User-Agent": ua, "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"}
+    headers = {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml;q=0.9,text/markdown;q=0.8,text/plain;q=0.7,*/*;q=0.1",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
 
     retryable_http_statuses = {429, 500, 502, 503, 504}
-    non_retryable_http_statuses = {400, 401, 403, 404}
-    backoff_seconds = (1.0, 3.0)
+    non_retryable_http_statuses = {400, 401, 404}
+    backoff_seconds = (1.0, 3.0, 7.0)
 
     def _should_retry(failure: FetchHtmlFailure) -> bool:
         if failure.kind in {"timeout", "connect", "tls", "protocol"}:
@@ -179,6 +210,7 @@ def fetch_html(
         if response.status_code >= 400:
             return FetchHtmlFailure(
                 url=raw,
+                final_url=final_url,
                 kind="http_error",
                 reason=f"HTTP {response.status_code}",
                 elapsed_ms=elapsed_ms,
@@ -190,6 +222,7 @@ def fetch_html(
         if response.status_code != 200:
             return FetchHtmlFailure(
                 url=raw,
+                final_url=final_url,
                 kind="http_error",
                 reason=f"unexpected status {response.status_code}",
                 elapsed_ms=elapsed_ms,
@@ -198,18 +231,31 @@ def fetch_html(
                 retry_count=0,
             )
 
-        if not _is_html_content_type(ct_header):
+        if _is_obvious_binary_mime(ct_header):
             return FetchHtmlFailure(
                 url=raw,
-                kind="not_html",
-                reason="Content-Type is not text/html",
+                final_url=final_url,
+                kind="not_indexable",
+                reason="Content-Type is a binary asset",
                 elapsed_ms=elapsed_ms,
                 status_code=response.status_code,
                 content_type=ct_header,
                 retry_count=0,
             )
 
-        html = response.text
+        if not _is_indexable_text_mime(ct_header):
+            return FetchHtmlFailure(
+                url=raw,
+                final_url=final_url,
+                kind="not_indexable",
+                reason="Content-Type is not an accepted text-like type",
+                elapsed_ms=elapsed_ms,
+                status_code=response.status_code,
+                content_type=ct_header,
+                retry_count=0,
+            )
+
+        body = response.text
         canonical_ct = _mime_without_params(ct_header) or "text/html"
 
         return FetchHtmlSuccess(
@@ -217,7 +263,7 @@ def fetch_html(
             final_url=final_url,
             status_code=response.status_code,
             content_type=canonical_ct,
-            html=html,
+            body=body,
             elapsed_ms=elapsed_ms,
         )
 

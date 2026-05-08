@@ -34,11 +34,11 @@ def test_fetch_html_success() -> None:
     assert out.url == "https://example.com/path"
     assert out.final_url == "https://example.com/path"
     assert "text/html" in out.content_type
-    assert out.html == "<html><body>ok</body></html>"
+    assert out.body == "<html><body>ok</body></html>"
     assert out.elapsed_ms >= 0
 
 
-def test_fetch_html_not_html_skipped() -> None:
+def test_fetch_html_not_indexable_skipped() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -49,7 +49,7 @@ def test_fetch_html_not_html_skipped() -> None:
     with _client(httpx.MockTransport(handler)) as client:
         out = fetch_html("https://example.com/x", settings=Settings(), client=client)
     assert isinstance(out, FetchHtmlFailure)
-    assert out.kind == "not_html"
+    assert out.kind == "not_indexable"
     assert out.status_code == 200
 
 
@@ -75,7 +75,7 @@ def test_fetch_html_timeout(monkeypatch) -> None:
         out = fetch_html("https://example.com/slow", settings=Settings(), client=client)
     assert isinstance(out, FetchHtmlFailure)
     assert out.kind == "timeout"
-    assert out.retry_count == 2
+    assert out.retry_count == 3
 
 
 def test_fetch_html_connect_error(monkeypatch) -> None:
@@ -88,7 +88,7 @@ def test_fetch_html_connect_error(monkeypatch) -> None:
         out = fetch_html("https://example.com/", settings=Settings(), client=client)
     assert isinstance(out, FetchHtmlFailure)
     assert out.kind == "connect"
-    assert out.retry_count == 2
+    assert out.retry_count == 3
 
 
 def test_fetch_html_redirect_then_success() -> None:

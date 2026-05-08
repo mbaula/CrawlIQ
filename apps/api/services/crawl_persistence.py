@@ -102,9 +102,12 @@ def _record_crawl_error(
     job: CrawlJob,
     *,
     url: str,
+    final_url: str | None = None,
     norm_key: str,
     error_type: str,
     error_message: str | None,
+    status_code: int | None = None,
+    content_type: str | None = None,
     retry_count: int = 0,
 ) -> None:
     err = session.scalar(
@@ -115,8 +118,11 @@ def _record_crawl_error(
     )
     if err is not None:
         err.url = url
+        err.final_url = final_url
         err.error_type = error_type
         err.error_message = error_message
+        err.status_code = status_code
+        err.content_type = content_type
         err.retry_count = int(retry_count)
         err.updated_at = datetime.now(timezone.utc)
     else:
@@ -124,9 +130,12 @@ def _record_crawl_error(
             CrawlError(
                 crawl_job_id=job.id,
                 url=url,
+                final_url=final_url,
                 normalized_url=norm_key,
                 error_type=error_type,
                 error_message=error_message,
+                status_code=status_code,
+                content_type=content_type,
                 retry_count=int(retry_count),
             ),
         )
@@ -195,9 +204,12 @@ def crawl_and_persist_page(
             session,
             job,
             url=url.strip(),
+            final_url=fetch_out.final_url,
             norm_key=norm_key or url.strip(),
             error_type=fetch_out.kind,
             error_message=fetch_out.reason,
+            status_code=fetch_out.status_code,
+            content_type=fetch_out.content_type,
             retry_count=int(fetch_out.retry_count or 0),
         )
         job.pages_failed = job.pages_failed + 1
@@ -245,15 +257,25 @@ def crawl_and_persist_page(
         )
 
     try:
-        parsed = parse_html(fetch_out.html, base_url=final_url)
+        if fetch_out.content_type in {"text/html", "application/xhtml+xml"}:
+            parsed = parse_html(fetch_out.body, base_url=final_url)
+            raw_hash = _sha256_utf8(fetch_out.body)
+        else:
+            # Plaintext/Markdown: treat body as extracted text. Link extraction is
+            # intentionally skipped (can be upgraded later with a markdown parser).
+            parsed = type("Tmp", (), {"title": "", "text": fetch_out.body, "links": []})()
+            raw_hash = _sha256_utf8(fetch_out.body)
     except Exception as exc:  # noqa: BLE001 — surface parse bugs as crawl errors
         _record_crawl_error(
             session,
             job,
             url=final_url,
+            final_url=final_url,
             norm_key=normalized_page_url,
             error_type="parse_error",
             error_message=str(exc),
+            status_code=fetch_out.status_code,
+            content_type=fetch_out.content_type,
         )
         job.pages_failed = job.pages_failed + 1
         session.flush()
@@ -264,7 +286,6 @@ def crawl_and_persist_page(
             error_message=str(exc),
         )
 
-    raw_hash = _sha256_utf8(fetch_out.html)
     content_hash = _sha256_utf8(parsed.text)
     domain_host = _link_host_lower(normalized_page_url) or ""
 
