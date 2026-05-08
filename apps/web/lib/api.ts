@@ -1,9 +1,14 @@
 /**
- * Base URL for the CrawlIQ HTTP API (browser + server).
- * Set in `.env` / Docker: `NEXT_PUBLIC_API_URL` (no trailing slash).
+ * Base URL for the CrawlIQ HTTP API.
+ *
+ * Server-side (SSR): Uses `API_URL` for Docker-internal networking (e.g., http://api:8000).
+ * Client-side: Uses `NEXT_PUBLIC_API_URL` for browser access (e.g., http://localhost:8000).
  */
 export function getApiBaseUrl(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
+  const isServer = typeof window === "undefined";
+  const serverUrl = isServer ? process.env.API_URL?.trim() : undefined;
+  const publicUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  const raw = serverUrl || publicUrl;
   if (!raw) return "http://localhost:8000";
   return raw.replace(/\/$/, "");
 }

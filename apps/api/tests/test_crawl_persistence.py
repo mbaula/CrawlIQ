@@ -210,7 +210,8 @@ def test_crawl_persist_fetch_failure_records_error(test_database_url: str) -> No
         err = session.scalar(select(CrawlError).where(CrawlError.crawl_job_id == job_id))
         assert err is not None
         assert err.error_type == "http_error"
-        assert err.retry_count == 2
+        # 404 is a non-retryable client error; retries should be 0.
+        assert err.retry_count == 0
 
 
 @pytest.mark.integration

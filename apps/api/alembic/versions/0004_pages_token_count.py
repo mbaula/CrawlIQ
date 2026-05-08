@@ -1,7 +1,7 @@
 """Add pages.token_count for search scoring.
 
 Revision ID: 0004_pages_token_count
-Revises: 0003_page_links_is_crawl_eligible
+Revises: 0003_page_links_crawl_eligible
 Create Date: 2026-05-05
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0004_pages_token_count"
-down_revision = "0003_page_links_is_crawl_eligible"
+down_revision = "0003_page_links_crawl_eligible"
 branch_labels = None
 depends_on = None
 

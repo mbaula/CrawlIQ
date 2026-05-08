@@ -1,6 +1,6 @@
 """Add ``page_links.is_crawl_eligible`` for frontier vs full link graph.
 
-Revision ID: 0003_page_links_is_crawl_eligible
+Revision ID: 0003_page_links_crawl_eligible
 Revises: 0002_queued_status
 Create Date: 2026-05-05
 
@@ -11,7 +11,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0003_page_links_is_crawl_eligible"
+revision: str = "0003_page_links_crawl_eligible"
 down_revision: Union[str, None] = "0002_queued_status"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

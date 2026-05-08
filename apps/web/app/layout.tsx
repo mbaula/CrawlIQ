@@ -52,9 +52,7 @@ export default function RootLayout({
             <TopNav />
             <div className="mx-auto max-w-content px-5 pb-16 pt-8 sm:px-8 sm:pt-10">{children}</div>
             <footer className="mx-auto max-w-content border-t border-rule px-5 py-6 sm:px-8">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-muted">
-                API base <span className="text-ink">{apiBase}</span>
-              </p>
+              
             </footer>
           </Fragment>
         </Providers>

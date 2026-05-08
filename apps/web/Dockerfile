@@ -1,8 +1,7 @@
-FROM node:20-alpine AS deps
-RUN apk add --no-cache ca-certificates libc6-compat
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json package-lock.json ./
 
 ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 ARG NPM_STRICT_SSL=true
@@ -13,9 +12,10 @@ RUN npm config set registry "${NPM_CONFIG_REGISTRY}" \
     && npm config set fetch-retry-mintimeout 20000 \
     && npm config set fetch-retry-maxtimeout 120000 \
     && if [ "${NPM_STRICT_SSL}" = "false" ]; then npm config set strict-ssl false; fi \
-    && npm install
+    && npm ci \
+    && npm install --save-optional @next/swc-linux-x64-gnu @next/swc-linux-x64-musl || true
 
-FROM node:20-alpine AS builder
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -26,14 +26,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN groupadd --gid 1001 nodejs \
+    && useradd --uid 1001 --gid nodejs --shell /usr/sbin/nologin --no-create-home nextjs
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

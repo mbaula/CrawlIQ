@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -13,6 +14,15 @@ from routers.search import router as search_router
 from routers.stats import router as stats_router
 
 app = FastAPI(title="CrawlIQ API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(crawl_jobs_router)
 app.include_router(queue_router)
 app.include_router(search_router)

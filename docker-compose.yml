@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: crawliq
       POSTGRES_DB: crawliq
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -80,6 +80,13 @@ services:
       redis:
         condition: service_healthy
 
+  demo-site:
+    image: nginx:1.27-alpine
+    ports:
+      - "${DEMO_SITE_PORT:-8081}:80"
+    volumes:
+      - ./demo-site:/usr/share/nginx/html:ro
+
   web:
     build:
       context: ./apps/web
@@ -91,13 +98,16 @@ services:
       - "${WEB_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
+      API_URL: http://api:8000
     depends_on:
       api:
         condition: service_healthy
 
   # Local UI dev without Windows npm/OpenSSL (ERR_SSL_CIPHER_OPERATION_FAILED).
   # Linux installs deps + correct SWC; node_modules live in a named volume.
+  # Only starts with: docker compose --profile dev up web-dev
   web-dev:
+    profiles: ["dev"]
     image: node:20-bookworm-slim
     working_dir: /app
     ports:
