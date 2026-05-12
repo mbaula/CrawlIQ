@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Identity,
     Integer,
@@ -18,6 +20,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base
@@ -55,6 +58,15 @@ class CrawlJob(Base):
     page_links: Mapped[list[PageLink]] = relationship(back_populates="crawl_job", cascade="all, delete-orphan")
     crawl_errors: Mapped[list[CrawlError]] = relationship(
         back_populates="crawl_job", cascade="all, delete-orphan",
+    )
+    page_graph_edges: Mapped[list[PageGraphEdge]] = relationship(
+        "PageGraphEdge", back_populates="crawl_job",
+    )
+    page_graph_clusters: Mapped[list[PageGraphCluster]] = relationship(
+        "PageGraphCluster", back_populates="crawl_job",
+    )
+    page_graph_metrics: Mapped[list[PageGraphMetric]] = relationship(
+        "PageGraphMetric", back_populates="crawl_job",
     )
 
 
@@ -202,6 +214,113 @@ class InvertedIndex(Base):
 
     term: Mapped[Term] = relationship(back_populates="postings")
     page: Mapped[Page] = relationship(back_populates="inverted_rows")
+
+
+class PageGraphEdge(Base):
+    __tablename__ = "page_graph_edges"
+    __table_args__ = (
+        CheckConstraint(
+            "edge_type IN ("
+            "'link', 'content_similarity', 'url_hierarchy', 'shared_terms', "
+            "'near_duplicate', 'co_ranked', 'manual')",
+            name="ck_page_graph_edges_edge_type",
+        ),
+        UniqueConstraint(
+            "crawl_job_id",
+            "source_page_id",
+            "target_page_id",
+            "edge_type",
+            name="uq_page_graph_edges_job_src_tgt_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=False), primary_key=True)
+    crawl_job_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("crawl_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_page_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_page_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    edge_type: Mapped[str] = mapped_column(Text, nullable=False)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("1.0"))
+    evidence: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    crawl_job: Mapped[CrawlJob] = relationship("CrawlJob", back_populates="page_graph_edges")
+    source_page: Mapped[Page] = relationship(foreign_keys=[source_page_id])
+    target_page: Mapped[Page] = relationship(foreign_keys=[target_page_id])
+
+
+class PageGraphCluster(Base):
+    __tablename__ = "page_graph_clusters"
+    __table_args__ = (
+        UniqueConstraint("crawl_job_id", "page_id", name="uq_page_graph_clusters_job_page"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=False), primary_key=True)
+    crawl_job_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("crawl_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    cluster_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cluster_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    crawl_job: Mapped[CrawlJob] = relationship("CrawlJob", back_populates="page_graph_clusters")
+
+
+class PageGraphMetric(Base):
+    __tablename__ = "page_graph_metrics"
+    __table_args__ = (
+        UniqueConstraint("crawl_job_id", "page_id", name="uq_page_graph_metrics_job_page"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=False), primary_key=True)
+    crawl_job_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("crawl_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    pagerank: Mapped[float | None] = mapped_column(Float, nullable=True)
+    in_degree: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    out_degree: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    betweenness: Mapped[float | None] = mapped_column(Float, nullable=True)
+    closeness: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    crawl_job: Mapped[CrawlJob] = relationship("CrawlJob", back_populates="page_graph_metrics")
 
 
 class SearchQuery(Base):

@@ -6,6 +6,9 @@ from models.domain import (
     CrawlJob,
     InvertedIndex,
     Page,
+    PageGraphCluster,
+    PageGraphEdge,
+    PageGraphMetric,
     PageLink,
     SearchQuery,
     Term,
@@ -20,4 +23,7 @@ __all__ = [
     "Term",
     "InvertedIndex",
     "SearchQuery",
+    "PageGraphEdge",
+    "PageGraphCluster",
+    "PageGraphMetric",
 ]

@@ -9,6 +9,9 @@ EXPECTED_TABLES = frozenset(
         "terms",
         "inverted_index",
         "search_queries",
+        "page_graph_edges",
+        "page_graph_clusters",
+        "page_graph_metrics",
     },
 )
 
