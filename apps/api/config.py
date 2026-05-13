@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     crawl_max_redirects: int = Field(default=10, ge=1, le=50)
     crawl_max_response_bytes: int = Field(default=5_242_880, ge=1, le=50_000_000)  # ~5 MiB default
 
+    graph_similarity_top_k: int = Field(default=10, ge=1, le=500)
+    graph_similarity_min_score: float = Field(default=0.15, ge=0.0, le=1.0)
+    graph_near_duplicate_min_score: float = Field(default=0.92, ge=0.0, le=1.0)
+
 
 def get_settings() -> Settings:
     return Settings()

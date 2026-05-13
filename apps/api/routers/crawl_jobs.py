@@ -17,13 +17,23 @@ from schemas.crawl_job import (
     CrawlJobCreateRequest,
     CrawlJobCreateResponse,
     CrawlJobDetailRead,
+    CrawlJobLinkEdgesGenerateResponse,
     CrawlJobListRead,
     CrawlJobRead,
     CrawlJobRetryResponse,
+    CrawlJobUrlHierarchyEdgesGenerateResponse,
+    CrawlJobContentSimilarityEdgesGenerateResponse,
+    CrawlJobNearDuplicateEdgesGenerateResponse,
     PageRead,
 )
+from services.page_graph_content_similarity import generate_content_similarity_edges_for_job
+from services.page_graph_near_duplicate import generate_near_duplicate_edges_for_job
+from services.page_graph_link_edges import generate_link_edges_for_job
+from services.page_graph_url_hierarchy_edges import generate_url_hierarchy_edges_for_job
 from services.queue import enqueue_process_crawl_job
 from services.urlnorm import normalize_seed_url
+
+from config import Settings, get_settings
 
 router = APIRouter(prefix="/crawl-jobs", tags=["crawl-jobs"])
 
@@ -170,6 +180,88 @@ def get_crawl_job(job_id: int, db: Session = Depends(get_db)) -> CrawlJobDetailR
     payload["pages_discovered"] = pages_discovered
     payload["crawl_progress"] = crawl_progress
     return CrawlJobDetailRead(**payload)
+
+
+@router.post(
+    "/{job_id}/graph/link-edges",
+    response_model=CrawlJobLinkEdgesGenerateResponse,
+)
+def generate_crawl_job_link_edges(
+    job_id: int,
+    db: Session = Depends(get_db),
+) -> CrawlJobLinkEdgesGenerateResponse:
+    """Build ``page_graph_edges`` rows with ``edge_type=link`` from ``page_links``."""
+    if db.get(CrawlJob, job_id) is None:
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    try:
+        inserted = generate_link_edges_for_job(db, job_id)
+        db.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CrawlJobLinkEdgesGenerateResponse(edges_inserted=inserted)
+
+
+@router.post(
+    "/{job_id}/graph/url-hierarchy-edges",
+    response_model=CrawlJobUrlHierarchyEdgesGenerateResponse,
+)
+def generate_crawl_job_url_hierarchy_edges(
+    job_id: int,
+    db: Session = Depends(get_db),
+) -> CrawlJobUrlHierarchyEdgesGenerateResponse:
+    """Build ``page_graph_edges`` rows with ``edge_type=url_hierarchy`` from URL paths."""
+    if db.get(CrawlJob, job_id) is None:
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    try:
+        inserted = generate_url_hierarchy_edges_for_job(db, job_id)
+        db.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CrawlJobUrlHierarchyEdgesGenerateResponse(edges_inserted=inserted)
+
+
+@router.post(
+    "/{job_id}/graph/content-similarity-edges",
+    response_model=CrawlJobContentSimilarityEdgesGenerateResponse,
+)
+def generate_crawl_job_content_similarity_edges(
+    job_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> CrawlJobContentSimilarityEdgesGenerateResponse:
+    """Build ``page_graph_edges`` rows with ``edge_type=content_similarity`` from the index."""
+    if db.get(CrawlJob, job_id) is None:
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    try:
+        inserted = generate_content_similarity_edges_for_job(db, job_id, settings=settings)
+        db.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CrawlJobContentSimilarityEdgesGenerateResponse(edges_inserted=inserted)
+
+
+@router.post(
+    "/{job_id}/graph/near-duplicate-edges",
+    response_model=CrawlJobNearDuplicateEdgesGenerateResponse,
+)
+def generate_crawl_job_near_duplicate_edges(
+    job_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> CrawlJobNearDuplicateEdgesGenerateResponse:
+    """Build ``page_graph_edges`` rows with ``edge_type=near_duplicate``."""
+    if db.get(CrawlJob, job_id) is None:
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    try:
+        inserted = generate_near_duplicate_edges_for_job(db, job_id, settings=settings)
+        db.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CrawlJobNearDuplicateEdgesGenerateResponse(edges_inserted=inserted)
 
 
 @router.get("/{job_id}/pages", response_model=list[PageRead])

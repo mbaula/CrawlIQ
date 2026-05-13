@@ -126,3 +126,39 @@ class CrawlJobRetryResponse(BaseModel):
     id: int
     status: str
     enqueued: bool = True
+
+
+class CrawlJobLinkEdgesGenerateResponse(BaseModel):
+    """Result of ``POST /crawl-jobs/{id}/graph/link-edges``."""
+
+    edges_inserted: int = Field(
+        ge=0,
+        description="Rows inserted this run (excludes conflicts from prior runs).",
+    )
+
+
+class CrawlJobUrlHierarchyEdgesGenerateResponse(BaseModel):
+    """Result of ``POST /crawl-jobs/{id}/graph/url-hierarchy-edges``."""
+
+    edges_inserted: int = Field(
+        ge=0,
+        description="Rows inserted this run (excludes conflicts from prior runs).",
+    )
+
+
+class CrawlJobContentSimilarityEdgesGenerateResponse(BaseModel):
+    """Result of ``POST /crawl-jobs/{id}/graph/content-similarity-edges``."""
+
+    edges_inserted: int = Field(
+        ge=0,
+        description="Rows inserted this run (excludes conflicts from prior runs).",
+    )
+
+
+class CrawlJobNearDuplicateEdgesGenerateResponse(BaseModel):
+    """Result of ``POST /crawl-jobs/{id}/graph/near-duplicate-edges``."""
+
+    edges_inserted: int = Field(
+        ge=0,
+        description="Rows inserted this run (excludes conflicts from prior runs).",
+    )
