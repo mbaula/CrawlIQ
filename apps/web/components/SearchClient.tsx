@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
-import { searchPages, type SearchResponse, type SearchResultItem } from "@/lib/api";
+import { searchPages, type RelatedPageRead, type SearchResponse, type SearchResultItem } from "@/lib/api";
 
 type Props = {
   initialQuery: string;
@@ -68,7 +68,60 @@ function ResultCard({ item }: { item: SearchResultItem }) {
           ))}
         </div>
       ) : null}
+      {(item.related ?? []).length > 0 ? <RelatedBlock related={item.related ?? []} /> : null}
+      {item.score_explanation ? (
+        <details className="mt-3 rounded border border-rule/80 bg-paper px-3 py-2 text-xs text-muted">
+          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-widest text-muted">
+            Graph score breakdown
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-ink">{item.score_explanation}</p>
+          {item.score_components ? (
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[10px] text-muted sm:grid-cols-4">
+              <dt>bm25_norm</dt>
+              <dd className="text-ink">{item.score_components.bm25_norm.toFixed(3)}</dd>
+              <dt>PR_norm</dt>
+              <dd className="text-ink">{item.score_components.pagerank_norm.toFixed(3)}</dd>
+              <dt>neighbor</dt>
+              <dd className="text-ink">{item.score_components.neighbor_boost_norm.toFixed(3)}</dd>
+              <dt>dup_norm</dt>
+              <dd className="text-ink">{item.score_components.duplicate_penalty_norm.toFixed(3)}</dd>
+            </dl>
+          ) : null}
+        </details>
+      ) : null}
     </article>
+  );
+}
+
+function RelatedBlock({ related }: { related: RelatedPageRead[] }) {
+  return (
+    <div className="mt-4 border-t border-rule pt-4">
+      <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">Related pages</p>
+      <ul className="mt-2 space-y-3">
+        {related.map((rel) => (
+          <li key={rel.page_id} className="rounded border border-rule/80 bg-paper px-3 py-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <a
+                href={rel.url}
+                target="_blank"
+                rel="noreferrer"
+                className="min-w-0 flex-1 truncate text-sm font-medium text-accent underline decoration-rule underline-offset-4 hover:decoration-accent"
+                title={rel.url}
+              >
+                {rel.title ?? "Untitled page"}
+              </a>
+              <span className="shrink-0 font-mono text-[10px] uppercase tracking-widest text-muted">
+                {rel.edge_type.replace(/_/g, " ")}
+              </span>
+            </div>
+            <p className="mt-1 text-xs leading-snug text-muted">{rel.reason}</p>
+            <p className="mt-1 font-mono text-[10px] text-rule">
+              strength <span className="text-ink">{rel.strength.toFixed(4)}</span>
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -76,6 +129,9 @@ export function SearchClient({ initialQuery, initialJobId }: Props) {
   const router = useRouter();
   const [query, setQuery] = useState(initialQuery);
   const [jobIdText, setJobIdText] = useState(initialJobId ? String(initialJobId) : "");
+  const [includeRelated, setIncludeRelated] = useState(Boolean(initialJobId));
+  const [graphEnhanced, setGraphEnhanced] = useState(false);
+  const [relatedLimit, setRelatedLimit] = useState(3);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [data, setData] = useState<SearchResponse | null>(null);
@@ -85,10 +141,23 @@ export function SearchClient({ initialQuery, initialJobId }: Props) {
   const jobId = useMemo(() => parseJobId(jobIdText), [jobIdText]);
   const trimmedQuery = useMemo(() => query.trim(), [query]);
 
+  useEffect(() => {
+    if (!jobId) {
+      setIncludeRelated(false);
+      setGraphEnhanced(false);
+    }
+  }, [jobId]);
+
   const requestKey = useMemo(() => {
-    const parts = [trimmedQuery, jobId ? String(jobId) : ""];
+    const parts = [
+      trimmedQuery,
+      jobId ? String(jobId) : "",
+      jobId && includeRelated ? "rel1" : "rel0",
+      jobId && includeRelated ? String(relatedLimit) : "",
+      jobId && graphEnhanced ? "g1" : "g0",
+    ];
     return parts.join("|");
-  }, [trimmedQuery, jobId]);
+  }, [trimmedQuery, jobId, includeRelated, relatedLimit, graphEnhanced]);
 
   async function runSearch(nextQuery: string, nextJobId: number | null) {
     const q = nextQuery.trim();
@@ -105,7 +174,17 @@ export function SearchClient({ initialQuery, initialJobId }: Props) {
     lastRequestKeyRef.current = nextKey;
 
     try {
-      const response = await searchPages({ q, job_id: nextJobId ?? undefined, limit: 20 });
+      const useRelated = Boolean(nextJobId && includeRelated);
+      const useGraph = Boolean(nextJobId && graphEnhanced);
+      const rl = Math.min(10, Math.max(1, relatedLimit));
+      const response = await searchPages({
+        q,
+        job_id: nextJobId ?? undefined,
+        limit: 20,
+        include_related: useRelated,
+        related_limit: useRelated ? rl : undefined,
+        graph_enhanced: useGraph,
+      });
       if (lastRequestKeyRef.current !== nextKey) return;
       setData(response);
     } catch (error) {
@@ -199,6 +278,55 @@ export function SearchClient({ initialQuery, initialJobId }: Props) {
           >
             {loading ? "Searching…" : "Search"}
           </button>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-rule text-accent focus:ring-accent"
+              checked={includeRelated && Boolean(jobId)}
+              disabled={!jobId}
+              onChange={(e) => setIncludeRelated(e.target.checked)}
+            />
+            <span>
+              Include related pages from the crawl graph{" "}
+              {!jobId ? <span className="text-rule">(enter a job id)</span> : null}
+            </span>
+          </label>
+          {jobId && includeRelated ? (
+            <label className="flex items-center gap-2 font-mono text-[11px] text-muted">
+              <span className="uppercase tracking-widest">Related limit</span>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                className="w-14 rounded border border-rule bg-paper px-2 py-1 text-xs text-ink"
+                value={relatedLimit}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (!Number.isFinite(n)) return;
+                  setRelatedLimit(Math.min(10, Math.max(1, Math.floor(n))));
+                }}
+              />
+            </label>
+          ) : null}
+        </div>
+
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-rule text-accent focus:ring-accent"
+              checked={graphEnhanced && Boolean(jobId)}
+              disabled={!jobId}
+              onChange={(e) => setGraphEnhanced(e.target.checked)}
+            />
+            <span>
+              Graph-enhanced ranking (BM25 + PageRank + neighbors){" "}
+              {!jobId ? <span className="text-rule">(enter a job id)</span> : null}
+            </span>
+          </label>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted">

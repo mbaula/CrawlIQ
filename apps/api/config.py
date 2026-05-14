@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Monorepo layout: repo-root `.env` (``CrawlIQ/.env``) and optional ``apps/api/.env``.
@@ -42,6 +42,26 @@ class Settings(BaseSettings):
     graph_similarity_top_k: int = Field(default=10, ge=1, le=500)
     graph_similarity_min_score: float = Field(default=0.15, ge=0.0, le=1.0)
     graph_near_duplicate_min_score: float = Field(default=0.92, ge=0.0, le=1.0)
+    graph_rerank_seed_limit: int = Field(
+        default=15,
+        ge=3,
+        le=200,
+        description="Top BM25 pages used as seeds for graph neighbor boost in graph-enhanced search.",
+    )
+    graph_rerank_max_candidates: int = Field(
+        default=200,
+        ge=30,
+        le=2000,
+        description="Max BM25 pages ∪ 1-hop neighbors considered before reranking.",
+    )
+
+    @model_validator(mode="after")
+    def _graph_rerank_seed_vs_max(self) -> "Settings":
+        if self.graph_rerank_seed_limit > self.graph_rerank_max_candidates:
+            raise ValueError(
+                "graph_rerank_seed_limit must be <= graph_rerank_max_candidates",
+            )
+        return self
 
 
 def get_settings() -> Settings:

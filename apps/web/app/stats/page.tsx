@@ -102,7 +102,7 @@ export default async function StatsPage() {
 
       {stats ? (
         <section className="mt-8 space-y-8">
-          {/* Issue 45: primary pipeline story */}
+          {/* Primary pipeline metrics */}
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             <MetricCard label="URLs attempted" value={formatNumber(stats.total_urls_attempted)} subtext="pages + error rows" />
             <MetricCard label="Pages fetched" value={formatNumber(stats.total_pages_crawled)} subtext="successful stores" />
@@ -428,7 +428,7 @@ export default async function StatsPage() {
               )}
             </section>
 
-            {/* Skipped vs fetch failures (Issue 45) */}
+            {/* Skipped vs fetch failures */}
             <section className="space-y-3 lg:col-span-2">
               <div className="grid gap-6 lg:grid-cols-2">
                 <div className="space-y-3">

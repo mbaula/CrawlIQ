@@ -10,7 +10,11 @@ This repository is a monorepo:
 | `apps/api` | FastAPI + Pydantic (HTTP API) |
 | `apps/worker` | Python crawler, indexer, and queue consumers |
 | `infra` | Docker Compose, Postgres/Redis config (filled in as the build progresses) |
-| `docs` | Architecture and design notes |
+| `docs` | Architecture notes: [glossary](docs/glossary.md), [formulas](docs/formulas.md), [page graph](docs/page-graph-design.md) |
+
+## Page graph (Sprint 9)
+
+After migrations through **`0007_page_graph_tables`**, populate per-job graph data without recrawling: **`POST /crawl-jobs/{id}/graph/link-edges`**, **`.../url-hierarchy-edges`**, **`.../content-similarity-edges`**, **`.../near-duplicate-edges`**, and **`.../graph/compute-metrics`**. Read slices with **`GET /graph/subgraph`**, **`GET /pages/{page_id}/neighbors`**, **`GET /pages/{page_id}/graph`**, **`GET /graph/stats`**, **`GET /graph/clusters`** (all require `job_id`). See **`docs/page-graph-design.md`** and **`article.md`** (Sprint 9).
 
 ## Prerequisites
 

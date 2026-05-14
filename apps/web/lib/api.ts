@@ -218,6 +218,26 @@ export async function retryCrawlJob(jobId: number): Promise<CrawlJobRetryRespons
   });
 }
 
+export type RelatedPageRead = {
+  page_id: number;
+  title: string | null;
+  url: string;
+  edge_type: string;
+  strength: number;
+  reason: string;
+};
+
+export type GraphScoreComponentsRead = {
+  bm25_raw: number;
+  bm25_norm: number;
+  pagerank_norm: number;
+  neighbor_boost_raw: number;
+  neighbor_boost_norm: number;
+  duplicate_penalty_raw: number;
+  duplicate_penalty_norm: number;
+  final_score: number;
+};
+
 export type SearchResultItem = {
   page_id: number;
   title: string | null;
@@ -225,6 +245,9 @@ export type SearchResultItem = {
   score: number;
   snippet: string;
   matched_terms: string[];
+  related: RelatedPageRead[];
+  score_components?: GraphScoreComponentsRead | null;
+  score_explanation?: string | null;
 };
 
 export type SearchResponse = {
@@ -238,6 +261,9 @@ export async function searchPages(params: {
   q: string;
   job_id?: number;
   limit?: number;
+  include_related?: boolean;
+  related_limit?: number;
+  graph_enhanced?: boolean;
 }): Promise<SearchResponse> {
   const query = params.q.trim();
   const limit = params.limit ?? 20;
@@ -246,6 +272,14 @@ export async function searchPages(params: {
   url.searchParams.set("limit", String(limit));
   if (typeof params.job_id === "number") {
     url.searchParams.set("job_id", String(params.job_id));
+  }
+  if (params.include_related) {
+    url.searchParams.set("include_related", "true");
+    const rl = params.related_limit ?? 3;
+    url.searchParams.set("related_limit", String(rl));
+  }
+  if (params.graph_enhanced) {
+    url.searchParams.set("graph_enhanced", "true");
   }
   return await fetchJsonOrThrow<SearchResponse>(url.toString(), {
     method: "GET",

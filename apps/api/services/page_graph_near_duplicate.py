@@ -26,7 +26,7 @@ _FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def _canonical_tuple(page: Page, inbound: int) -> tuple[Any, ...]:
-    """Smaller tuple wins as canonical (see Issue 50 tie-break rules)."""
+    """Smaller tuple wins as canonical (tie-break rules)."""
     title = (page.title or "").strip()
     return (
         len(page.normalized_url),

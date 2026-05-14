@@ -192,6 +192,26 @@ def execute_search(
 
     Scoring uses BM25 with k1=1.5, b=0.75. Query term counts act as multipliers.
     """
+    ranked_full, corpus_stats = execute_search_ranked_pages(
+        session,
+        raw_query=raw_query,
+        crawl_job_id=crawl_job_id,
+    )
+    return ranked_full[:result_limit], corpus_stats
+
+
+def execute_search_ranked_pages(
+    session: Session,
+    *,
+    raw_query: str,
+    crawl_job_id: int | None,
+    max_ranked: int | None = None,
+) -> tuple[list[_RankedPage], _CorpusStats]:
+    """
+    Same BM25 scoring as ``execute_search``, but returns the full sorted list (optionally capped).
+
+    When ``max_ranked`` is set, only the first ``max_ranked`` rows are kept (still sorted by score).
+    """
     query_term_weights: Counter[str] = Counter(tokenize(raw_query))
     corpus_stats = _compute_corpus_stats(session, crawl_job_id=crawl_job_id)
 
@@ -208,7 +228,6 @@ def execute_search(
 
     page_score_by_id: dict[int, float] = defaultdict(float)
     matched_terms_by_page: dict[int, set[str]] = defaultdict(set)
-    page_token_count_cache: dict[int, int] = {}
 
     for query_term, query_weight in query_term_weights.items():
         term_row = term_by_key.get(query_term)
@@ -244,7 +263,6 @@ def execute_search(
 
         for page_id, term_frequency, token_count in session.execute(stmt):
             page_id = int(page_id)
-            page_token_count_cache[page_id] = int(token_count)
 
             bm25_contribution = _bm25_term_score(
                 term_frequency=int(term_frequency),
@@ -255,7 +273,7 @@ def execute_search(
             page_score_by_id[page_id] += bm25_contribution * float(query_weight)
             matched_terms_by_page[page_id].add(query_term)
 
-    ranked = sorted(
+    ranked_full = sorted(
         (
             _RankedPage(
                 page_id=pid,
@@ -265,9 +283,11 @@ def execute_search(
             for pid, score in page_score_by_id.items()
         ),
         key=lambda row: (-row.score, row.page_id),
-    )[:result_limit]
+    )
+    if max_ranked is not None:
+        ranked_full = ranked_full[: max(0, max_ranked)]
 
-    return ranked, corpus_stats
+    return ranked_full, corpus_stats
 
 
 def search_indexed_pages(
@@ -328,6 +348,8 @@ def search_indexed_pages(
                 "score": round(float(ranked.score), 4),
                 "snippet": snippet,
                 "matched_terms": matched,
+                "score_components": None,
+                "score_explanation": None,
             },
         )
 

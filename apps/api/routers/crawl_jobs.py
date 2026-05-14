@@ -24,9 +24,11 @@ from schemas.crawl_job import (
     CrawlJobUrlHierarchyEdgesGenerateResponse,
     CrawlJobContentSimilarityEdgesGenerateResponse,
     CrawlJobNearDuplicateEdgesGenerateResponse,
+    CrawlJobGraphMetricsComputeResponse,
     PageRead,
 )
 from services.page_graph_content_similarity import generate_content_similarity_edges_for_job
+from services.page_graph_metrics import compute_graph_metrics_for_job
 from services.page_graph_near_duplicate import generate_near_duplicate_edges_for_job
 from services.page_graph_link_edges import generate_link_edges_for_job
 from services.page_graph_url_hierarchy_edges import generate_url_hierarchy_edges_for_job
@@ -262,6 +264,33 @@ def generate_crawl_job_near_duplicate_edges(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return CrawlJobNearDuplicateEdgesGenerateResponse(edges_inserted=inserted)
+
+
+@router.post(
+    "/{job_id}/graph/compute-metrics",
+    response_model=CrawlJobGraphMetricsComputeResponse,
+)
+def compute_crawl_job_graph_metrics(
+    job_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> CrawlJobGraphMetricsComputeResponse:
+    """Rebuild ``page_graph_metrics`` and ``page_graph_clusters`` for this job."""
+    if db.get(CrawlJob, job_id) is None:
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    try:
+        result = compute_graph_metrics_for_job(db, job_id, settings=settings)
+        db.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CrawlJobGraphMetricsComputeResponse(
+        pages_count=result.pages_count,
+        edges_used=result.edges_used,
+        pagerank_iterations=result.pagerank_iterations,
+        weak_components_count=result.weak_components_count,
+        betweenness_computed=result.betweenness_computed,
+    )
 
 
 @router.get("/{job_id}/pages", response_model=list[PageRead])

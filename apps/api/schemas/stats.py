@@ -56,7 +56,7 @@ class LargestPageRead(BaseModel):
 
 
 class CrawlStatsRead(BaseModel):
-    """Crawl/index/search/reliability metrics (Issue 44: clear outcome definitions)."""
+    """Crawl/index/search/reliability metrics with clear outcome definitions."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,7 +137,7 @@ class CrawlStatsRead(BaseModel):
     top_queries: list[QueryCount] = Field(default_factory=list)
     top_crawled_domains: list[DomainCount] = Field(default_factory=list)
 
-    # Failure breakdown (Issue 45: skipped vs fetch failures)
+    # Failure breakdown: skipped vs fetch failures
     skipped_breakdown: list[ErrorTypeCount] = Field(
         default_factory=list,
         description="Policy / intentional skips with readable labels.",

@@ -162,3 +162,13 @@ class CrawlJobNearDuplicateEdgesGenerateResponse(BaseModel):
         ge=0,
         description="Rows inserted this run (excludes conflicts from prior runs).",
     )
+
+
+class CrawlJobGraphMetricsComputeResponse(BaseModel):
+    """Result of ``POST /crawl-jobs/{id}/graph/compute-metrics``."""
+
+    pages_count: int = Field(ge=0)
+    edges_used: int = Field(ge=0)
+    pagerank_iterations: int = Field(ge=0)
+    weak_components_count: int = Field(ge=0)
+    betweenness_computed: bool

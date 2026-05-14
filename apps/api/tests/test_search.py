@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from db.session import get_db
 from main import app
-from models.domain import CrawlJob, Page, SearchQuery
+from models.domain import CrawlJob, Page, PageGraphEdge, SearchQuery
 from services.index_page import index_page
 
 
@@ -40,6 +40,20 @@ def test_search_unknown_job_404(client_mock_search_db) -> None:
     mock_session.get.return_value = None
     response = client.get("/search?q=hello&job_id=999")
     assert response.status_code == 404
+
+
+def test_search_include_related_requires_job_id_422(client_mock_search_db) -> None:
+    client, _ = client_mock_search_db
+    r = client.get("/search?q=hello&include_related=true")
+    assert r.status_code == 422
+    detail = r.json().get("detail", "")
+    assert "job_id" in str(detail).lower()
+
+
+def test_search_related_limit_above_10_returns_422(client_mock_search_db) -> None:
+    client, _ = client_mock_search_db
+    r = client.get("/search?q=hello&job_id=1&include_related=true&related_limit=11")
+    assert r.status_code == 422
 
 
 def test_search_stats_returns_rows(client_mock_search_db) -> None:
@@ -140,6 +154,9 @@ def test_search_returns_hits_and_logs_query(test_database_url: str) -> None:
             assert "async" in first["matched_terms"] or "fastapi" in first["matched_terms"]
             assert first["score"] > 0
             assert first["snippet"]
+            assert first.get("related") == []
+            assert first.get("score_components") is None
+            assert first.get("score_explanation") is None
 
         with SessionLocal() as session:
             logged = session.scalar(select(SearchQuery).order_by(SearchQuery.id.desc()).limit(1))
@@ -207,5 +224,154 @@ def test_search_without_job_id_sees_multiple_jobs(test_database_url: str) -> Non
             response = test_client.get("/search?q=zebrazon&limit=10")
             assert response.status_code == 200, response.text
             assert response.json()["result_count"] == 2
+            for hit in response.json()["results"]:
+                assert hit.get("related") == []
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_search_include_related_graph_direction_dedupe_limit(test_database_url: str) -> None:
+    from db.url import sync_engine_url
+
+    engine = create_engine(sync_engine_url(test_database_url), pool_pre_ping=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def _get_db():
+        session = SessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db
+    try:
+        with TestClient(app) as test_client:
+            with SessionLocal() as session:
+                job = CrawlJob(
+                    seed_url="https://rel.example/",
+                    normalized_seed_url="https://rel.example/",
+                    status="completed",
+                )
+                session.add(job)
+                session.flush()
+
+                p1 = Page(
+                    crawl_job_id=job.id,
+                    url="https://rel.example/p1",
+                    normalized_url="https://rel.example/p1",
+                    domain="rel.example",
+                    title="GadgetRel Alpha Page",
+                    extracted_text="unique gadgetrel one alpha alpha alpha",
+                    status_code=200,
+                    depth=0,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                p2 = Page(
+                    crawl_job_id=job.id,
+                    url="https://rel.example/p2",
+                    normalized_url="https://rel.example/p2",
+                    domain="rel.example",
+                    title="GadgetRel Beta",
+                    extracted_text="unique gadgetrel one beta",
+                    status_code=200,
+                    depth=0,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                p3 = Page(
+                    crawl_job_id=job.id,
+                    url="https://rel.example/p3",
+                    normalized_url="https://rel.example/p3",
+                    domain="rel.example",
+                    title="GadgetRel Gamma",
+                    extracted_text="unique gadgetrel one gamma",
+                    status_code=200,
+                    depth=0,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                p4 = Page(
+                    crawl_job_id=job.id,
+                    url="https://rel.example/p4",
+                    normalized_url="https://rel.example/p4",
+                    domain="rel.example",
+                    title="GadgetRel Delta",
+                    extracted_text="unique gadgetrel one delta",
+                    status_code=200,
+                    depth=0,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                session.add_all([p1, p2, p3, p4])
+                session.flush()
+
+                session.add_all(
+                    [
+                        PageGraphEdge(
+                            crawl_job_id=job.id,
+                            source_page_id=p4.id,
+                            target_page_id=p1.id,
+                            edge_type="link",
+                            weight=1.0,
+                            evidence={"source": "direct_internal_link"},
+                        ),
+                        PageGraphEdge(
+                            crawl_job_id=job.id,
+                            source_page_id=p1.id,
+                            target_page_id=p2.id,
+                            edge_type="link",
+                            weight=0.5,
+                            evidence={"source": "direct_internal_link"},
+                        ),
+                        PageGraphEdge(
+                            crawl_job_id=job.id,
+                            source_page_id=p1.id,
+                            target_page_id=p2.id,
+                            edge_type="url_hierarchy",
+                            weight=0.9,
+                            evidence={"parent_path": "/", "child_path": "/p2"},
+                        ),
+                        PageGraphEdge(
+                            crawl_job_id=job.id,
+                            source_page_id=p1.id,
+                            target_page_id=p3.id,
+                            edge_type="content_similarity",
+                            weight=0.99,
+                            evidence={"similarity": 0.99, "shared_terms": ["gamma"], "source": "x"},
+                        ),
+                    ],
+                )
+                session.commit()
+
+                for pid in (p1.id, p2.id, p3.id, p4.id):
+                    index_page(session, pid)
+                session.commit()
+
+                job_id = job.id
+                p1_id, p2_id, p3_id, p4_id = p1.id, p2.id, p3.id, p4.id
+
+            r = test_client.get(
+                f"/search?q=gadgetrel%20alpha&job_id={job_id}&limit=5&include_related=true&related_limit=2",
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            hit = next(h for h in body["results"] if h["page_id"] == p1_id)
+            rel = hit["related"]
+            assert len(rel) == 2
+            assert [x["page_id"] for x in rel] == [p4_id, p3_id]
+            assert rel[0]["strength"] >= rel[1]["strength"]
+            assert rel[0]["edge_type"] == "link"
+            assert rel[0]["reason"]
+            assert "Direct link" in rel[0]["reason"] or "link" in rel[0]["reason"].lower()
+            p2_row = next((x for x in rel if x["page_id"] == p2_id), None)
+            assert p2_row is None
+
+            r2 = test_client.get(
+                f"/search?q=gadgetrel%20alpha&job_id={job_id}&limit=5&include_related=true&related_limit=5",
+            )
+            hit2 = next(h for h in r2.json()["results"] if h["page_id"] == p1_id)
+            ids5 = [x["page_id"] for x in hit2["related"]]
+            assert p2_id in ids5
+            p2_rel = next(x for x in hit2["related"] if x["page_id"] == p2_id)
+            assert p2_rel["edge_type"] == "url_hierarchy"
+            assert p2_rel["strength"] == 0.9
     finally:
         app.dependency_overrides.clear()

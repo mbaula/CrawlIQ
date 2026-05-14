@@ -1,4 +1,4 @@
-"""System stats endpoint for the dashboard (Issue 44: outcomes, HTTP mix, percentiles)."""
+"""System stats endpoint for the dashboard (outcomes, HTTP mix, percentiles)."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def _skipped_and_fetch_breakdowns(
     *,
     rate_limited_count: int,
 ) -> tuple[list[ErrorTypeCount], list[ErrorTypeCount]]:
-    """Issue 45: policy skips vs true fetch failures (HTTP 429 split from http_error)."""
+    """Policy skips vs true fetch failures (HTTP 429 split from http_error)."""
     skipped: list[ErrorTypeCount] = []
     for key, label in _SKIPPED_BREAKDOWN_TYPES:
         c = int(
