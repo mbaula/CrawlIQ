@@ -208,8 +208,9 @@ def test_graph_enhanced_duplicate_penalty_changes_order(test_database_url: str) 
                 ),
             )
             session.commit()
-            for pid in (p_a.id, p_b.id):
-                index_page(session, pid)
+            index_page(session, p_a.id)
+            session.flush()
+            index_page(session, p_b.id)
             session.commit()
             job_id = job.id
             a_id, b_id = p_a.id, p_b.id

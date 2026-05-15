@@ -205,6 +205,7 @@ def test_near_duplicate_inbound_tie_breaks_canonical(test_database_url: str) -> 
                 target_normalized_url=p2.normalized_url,
                 target_page_id=p2.id,
                 depth=1,
+                is_crawl_eligible=True,
             ),
         )
         session.commit()

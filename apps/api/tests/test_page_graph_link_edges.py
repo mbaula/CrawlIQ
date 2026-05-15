@@ -115,10 +115,11 @@ def test_link_edges_missing_target_no_row(test_database_url: str) -> None:
                 is_crawl_eligible=True,
             ),
         )
+        job_id = job.id
         session.commit()
 
     with SessionLocal() as session:
-        n = generate_link_edges_for_job(session, job.id)
+        n = generate_link_edges_for_job(session, job_id)
         session.commit()
         assert n == 0
 
@@ -154,10 +155,11 @@ def test_link_edges_skip_self_link(test_database_url: str) -> None:
                 is_crawl_eligible=True,
             ),
         )
+        job_id = job.id
         session.commit()
 
     with SessionLocal() as session:
-        n = generate_link_edges_for_job(session, job.id)
+        n = generate_link_edges_for_job(session, job_id)
         session.commit()
         assert n == 0
 
