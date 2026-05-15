@@ -56,7 +56,8 @@ def _inbound_counts(session: Session, crawl_job_id: int, pages: list[Page]) -> d
         if tid is not None:
             counts[int(tid)] += 1
         else:
-            pid = norm_to_id.get(turl)
+            key = str(turl).strip() if turl is not None else ""
+            pid = norm_to_id.get(key)
             if pid is not None:
                 counts[pid] += 1
     return dict(counts)

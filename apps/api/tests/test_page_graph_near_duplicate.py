@@ -203,6 +203,7 @@ def test_near_duplicate_inbound_tie_breaks_canonical(test_database_url: str) -> 
                 crawl_job_id=job.id,
                 source_page_id=hub.id,
                 target_normalized_url=p2.normalized_url,
+                target_page_id=p2.id,
                 depth=1,
             ),
         )
@@ -241,7 +242,8 @@ def test_near_duplicate_high_similarity_different_hash(test_database_url: str) -
         session.add(job)
         session.flush()
         t = Term(term="shared_nd_term")
-        session.add(t)
+        t_other = Term(term="only_on_p3_nd_term")
+        session.add_all([t, t_other])
         session.flush()
         u = "https://hsim.example"
         p1 = Page(
@@ -262,12 +264,24 @@ def test_near_duplicate_high_similarity_different_hash(test_database_url: str) -
             depth=0,
             content_hash="22" * 32,
         )
-        session.add_all([p1, p2])
+        p3 = Page(
+            crawl_job_id=job.id,
+            url=f"{u}/c",
+            normalized_url=normalize_url(f"{u}/c"),
+            domain="hsim.example",
+            title="t",
+            depth=0,
+            content_hash="33" * 32,
+        )
+        session.add_all([p1, p2, p3])
         session.flush()
         session.add_all(
             [
                 InvertedIndex(page_id=p1.id, term_id=t.id, term_frequency=5),
                 InvertedIndex(page_id=p2.id, term_id=t.id, term_frequency=5),
+                # Third page with a disjoint term so job-local IDF for ``shared_nd_term`` is > 0
+                # (with only two docs both containing one term, (n+1)/(df+1) == 1 and cosine weights vanish).
+                InvertedIndex(page_id=p3.id, term_id=t_other.id, term_frequency=10),
             ],
         )
         session.commit()

@@ -70,7 +70,7 @@ def test_process_crawl_job_marks_completed(
             final_url=url,
             status_code=200,
             content_type="text/html",
-            html="<html><head><title>T</title></head><body>x</body></html>",
+            body="<html><head><title>T</title></head><body>x</body></html>",
             elapsed_ms=1,
         )
 
