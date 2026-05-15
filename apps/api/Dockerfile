@@ -46,7 +46,7 @@ COPY apps/api/models ./models
 COPY apps/api/routers ./routers
 COPY apps/api/schemas ./schemas
 COPY apps/api/services ./services
-COPY apps/api/config.py apps/api/main.py .
+COPY apps/api/config.py apps/api/main.py apps/api/backfill_all_job_graph_edges.py .
 
 EXPOSE 8000
 

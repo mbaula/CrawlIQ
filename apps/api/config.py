@@ -54,6 +54,18 @@ class Settings(BaseSettings):
         le=2000,
         description="Max BM25 pages ∪ 1-hop neighbors considered before reranking.",
     )
+    graph_query_global_hit_limit: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description="Max BM25 hits (unique pages) for GET /graph/query global selection pool.",
+    )
+    graph_metrics_betweenness_max_pages: int = Field(
+        default=500,
+        ge=1,
+        le=50_000,
+        description="Max pages for which betweenness centrality is computed in graph metrics.",
+    )
 
     @model_validator(mode="after")
     def _graph_rerank_seed_vs_max(self) -> "Settings":

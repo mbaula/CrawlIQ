@@ -22,6 +22,28 @@ from schemas.graph import (
     GraphStatsRead,
     GraphSubgraphRead,
 )
+from services.graph_edge_reason import format_graph_edge_reason
+
+# Default expansion types for query-centered graph (near_duplicate does not expand BFS).
+GRAPH_QUERY_DEFAULT_EXPANSION_EDGE_TYPES: frozenset[str] = frozenset(
+    {"link", "url_hierarchy", "content_similarity"},
+)
+
+
+def dedupe_seeds_cap_max_nodes(seed_page_ids: list[int], max_nodes: int) -> list[int]:
+    """Preserve caller order, drop duplicate ids, cap length to ``max_nodes``."""
+    if not seed_page_ids or max_nodes <= 0:
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for sid in seed_page_ids:
+        if sid in seen:
+            continue
+        seen.add(sid)
+        out.append(sid)
+        if len(out) >= max_nodes:
+            break
+    return out
 
 
 def crawl_job_exists(session: Session, crawl_job_id: int) -> bool:
@@ -65,6 +87,75 @@ def bounded_bfs_page_ids(
             select(PageGraphEdge.source_page_id, PageGraphEdge.target_page_id)
             .where(
                 PageGraphEdge.crawl_job_id == crawl_job_id,
+                or_(
+                    PageGraphEdge.source_page_id.in_(frontier),
+                    PageGraphEdge.target_page_id.in_(frontier),
+                ),
+            )
+        )
+        rows = session.execute(stmt).all()
+
+        candidates: list[int] = []
+        seen_cand: set[int] = set()
+        for src, tgt in rows:
+            if src in frontier and tgt not in visited:
+                if tgt not in seen_cand:
+                    seen_cand.add(tgt)
+                    candidates.append(tgt)
+            if tgt in frontier and src not in visited:
+                if src not in seen_cand:
+                    seen_cand.add(src)
+                    candidates.append(src)
+        candidates.sort()
+
+        next_frontier: set[int] = set()
+        for v in candidates:
+            if len(visited) >= max_nodes:
+                break
+            visited[v] = hop + 1
+            next_frontier.add(v)
+        if len(visited) >= max_nodes:
+            break
+        frontier = next_frontier
+        if not frontier:
+            break
+
+    return sorted(visited.keys())
+
+
+def bounded_bfs_page_ids_multi_center(
+    session: Session,
+    *,
+    crawl_job_id: int,
+    seed_page_ids: list[int],
+    radius: int,
+    max_nodes: int,
+    expansion_edge_types: frozenset[str],
+) -> list[int]:
+    """
+    Undirected layered BFS from multiple seeds, traversing only ``expansion_edge_types``.
+
+    ``seed_page_ids`` should be ordered by caller priority (e.g. BM25 order). If more seeds
+    than ``max_nodes``, only the first ``max_nodes`` seeds are kept.
+    """
+    if not seed_page_ids or max_nodes <= 0:
+        return []
+
+    centers = dedupe_seeds_cap_max_nodes(seed_page_ids, max_nodes)
+    visited: dict[int, int] = {pid: 0 for pid in centers}
+    frontier: set[int] = set(centers)
+
+    for hop in range(radius):
+        if len(visited) >= max_nodes:
+            break
+        if not frontier:
+            break
+
+        stmt = (
+            select(PageGraphEdge.source_page_id, PageGraphEdge.target_page_id)
+            .where(
+                PageGraphEdge.crawl_job_id == crawl_job_id,
+                PageGraphEdge.edge_type.in_(sorted(expansion_edge_types)),
                 or_(
                     PageGraphEdge.source_page_id.in_(frontier),
                     PageGraphEdge.target_page_id.in_(frontier),
@@ -291,6 +382,7 @@ def build_subgraph_read(
             edge_type=e.edge_type,
             weight=float(e.weight),
             evidence=e.evidence,
+            reason=format_graph_edge_reason(e.edge_type, e.evidence, float(e.weight)),
         )
         for e in edge_rows
     ]

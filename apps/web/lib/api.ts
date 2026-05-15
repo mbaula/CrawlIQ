@@ -225,6 +225,7 @@ export type RelatedPageRead = {
   edge_type: string;
   strength: number;
   reason: string;
+  also_related_by?: string[];
 };
 
 export type GraphScoreComponentsRead = {
@@ -248,6 +249,9 @@ export type SearchResultItem = {
   related: RelatedPageRead[];
   score_components?: GraphScoreComponentsRead | null;
   score_explanation?: string | null;
+  is_duplicate_variant?: boolean;
+  canonical_page_id?: number | null;
+  duplicate_explanation?: string | null;
 };
 
 export type SearchResponse = {
@@ -264,6 +268,7 @@ export async function searchPages(params: {
   include_related?: boolean;
   related_limit?: number;
   graph_enhanced?: boolean;
+  annotate_duplicate_hits?: boolean;
 }): Promise<SearchResponse> {
   const query = params.q.trim();
   const limit = params.limit ?? 20;
@@ -281,7 +286,87 @@ export async function searchPages(params: {
   if (params.graph_enhanced) {
     url.searchParams.set("graph_enhanced", "true");
   }
+  if (params.annotate_duplicate_hits) {
+    url.searchParams.set("annotate_duplicate_hits", "true");
+  }
   return await fetchJsonOrThrow<SearchResponse>(url.toString(), {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export type GraphQueryNodeRole = "query_match" | "related_neighbor" | "duplicate";
+
+export type GraphNodeMetricsRead = {
+  pagerank: number | null;
+  in_degree: number;
+  out_degree: number;
+  betweenness: number | null;
+  closeness: number | null;
+};
+
+export type GraphQueryNodeRead = {
+  page_id: number;
+  title: string | null;
+  url: string;
+  normalized_url: string;
+  depth: number;
+  role: GraphQueryNodeRole;
+  bm25_score: number | null;
+  metrics: GraphNodeMetricsRead | null;
+  cluster_id: number | null;
+};
+
+export type GraphQueryEdgeRead = {
+  edge_id: number;
+  source_page_id: number;
+  target_page_id: number;
+  edge_type: string;
+  weight: number;
+  evidence: unknown | null;
+  /** Present when the API includes formatted reasons; client falls back if absent. */
+  reason?: string;
+};
+
+export type GraphQuerySelectedJobRead = {
+  crawl_job_id: number;
+  selection_mode: "auto" | "explicit";
+  total_bm25_score: number;
+  hit_count: number;
+  message: string;
+};
+
+export type GraphQueryRead = {
+  query: string;
+  message: string | null;
+  global_hit_limit: number;
+  max_seed_pages: number;
+  radius: number;
+  max_nodes: number;
+  expansion_edge_types: string[];
+  selected_job: GraphQuerySelectedJobRead | null;
+  seed_page_ids: number[];
+  nodes: GraphQueryNodeRead[];
+  edges: GraphQueryEdgeRead[];
+};
+
+export async function fetchGraphQuery(params: {
+  q: string;
+  job_id?: number;
+  max_seed_pages?: number;
+  radius?: number;
+  max_nodes?: number;
+}): Promise<GraphQueryRead> {
+  const query = params.q.trim();
+  const url = new URL(`${getApiBaseUrl()}/graph/query`);
+  url.searchParams.set("q", query);
+  url.searchParams.set("max_seed_pages", String(params.max_seed_pages ?? 10));
+  url.searchParams.set("radius", String(params.radius ?? 1));
+  url.searchParams.set("max_nodes", String(params.max_nodes ?? 50));
+  if (typeof params.job_id === "number") {
+    url.searchParams.set("job_id", String(params.job_id));
+  }
+  return await fetchJsonOrThrow<GraphQueryRead>(url.toString(), {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });

@@ -14,6 +14,10 @@ class RelatedPageRead(BaseModel):
     edge_type: str
     strength: float = Field(description="Edge weight (e.g. cosine for content similarity).")
     reason: str = Field(description="Short explanation from edge type and stored evidence.")
+    also_related_by: list[str] = Field(
+        default_factory=list,
+        description="Other edge types between the same hit and neighbor (primary edge chosen by type priority).",
+    )
 
 
 class GraphScoreComponentsRead(BaseModel):
@@ -52,6 +56,18 @@ class SearchResultItem(BaseModel):
     score_explanation: str | None = Field(
         default=None,
         description="Human-readable score breakdown for graph-enhanced search.",
+    )
+    is_duplicate_variant: bool = Field(
+        default=False,
+        description="True when this hit is a near-duplicate of an earlier hit (annotate_duplicate_hits).",
+    )
+    canonical_page_id: int | None = Field(
+        default=None,
+        description="Earlier hit page id when ``is_duplicate_variant`` is true.",
+    )
+    duplicate_explanation: str | None = Field(
+        default=None,
+        description="Short note for duplicate variants when annotation is enabled.",
     )
 
 

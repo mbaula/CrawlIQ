@@ -56,6 +56,12 @@ def test_search_related_limit_above_10_returns_422(client_mock_search_db) -> Non
     assert r.status_code == 422
 
 
+def test_search_annotate_duplicate_hits_requires_job_id_422(client_mock_search_db) -> None:
+    client, _ = client_mock_search_db
+    r = client.get("/search?q=hello&annotate_duplicate_hits=true")
+    assert r.status_code == 422
+
+
 def test_search_stats_returns_rows(client_mock_search_db) -> None:
     client, mock_session = client_mock_search_db
     row = SearchQuery(
@@ -360,7 +366,7 @@ def test_search_include_related_graph_direction_dedupe_limit(test_database_url: 
             assert rel[0]["strength"] >= rel[1]["strength"]
             assert rel[0]["edge_type"] == "link"
             assert rel[0]["reason"]
-            assert "Direct link" in rel[0]["reason"] or "link" in rel[0]["reason"].lower()
+            assert "Direct link between" in rel[0]["reason"]
             p2_row = next((x for x in rel if x["page_id"] == p2_id), None)
             assert p2_row is None
 
@@ -371,7 +377,92 @@ def test_search_include_related_graph_direction_dedupe_limit(test_database_url: 
             ids5 = [x["page_id"] for x in hit2["related"]]
             assert p2_id in ids5
             p2_rel = next(x for x in hit2["related"] if x["page_id"] == p2_id)
-            assert p2_rel["edge_type"] == "url_hierarchy"
-            assert p2_rel["strength"] == 0.9
+            assert p2_rel["edge_type"] == "link"
+            assert p2_rel["strength"] == 0.5
+            assert p2_rel.get("also_related_by") == ["url_hierarchy"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_search_annotate_duplicate_flags_second_hit(test_database_url: str) -> None:
+    from db.url import sync_engine_url
+
+    engine = create_engine(sync_engine_url(test_database_url), pool_pre_ping=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def _get_db():
+        session = SessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db
+    try:
+        with TestClient(app) as test_client:
+            with SessionLocal() as session:
+                job = CrawlJob(
+                    seed_url="https://dupann.example/",
+                    normalized_seed_url="https://dupann.example/",
+                    status="completed",
+                )
+                session.add(job)
+                session.flush()
+                token = "dupannottokenunique56"
+                p1 = Page(
+                    crawl_job_id=job.id,
+                    url="https://dupann.example/first",
+                    normalized_url="https://dupann.example/first",
+                    domain="dupann.example",
+                    title="Dup pair",
+                    extracted_text=f"alpha {token} beta gamma",
+                    status_code=200,
+                    depth=0,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                p2 = Page(
+                    crawl_job_id=job.id,
+                    url="https://dupann.example/second",
+                    normalized_url="https://dupann.example/second",
+                    domain="dupann.example",
+                    title="Dup pair",
+                    extracted_text=f"alpha {token} beta gamma",
+                    status_code=200,
+                    depth=0,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                session.add_all([p1, p2])
+                session.flush()
+                session.add(
+                    PageGraphEdge(
+                        crawl_job_id=job.id,
+                        source_page_id=p1.id,
+                        target_page_id=p2.id,
+                        edge_type="near_duplicate",
+                        weight=0.97,
+                        evidence={"kind": "high_similarity", "similarity": 0.97},
+                    ),
+                )
+                session.commit()
+                index_page(session, p1.id)
+                index_page(session, p2.id)
+                session.commit()
+                job_id, p1_id, p2_id = job.id, p1.id, p2.id
+
+            r = test_client.get(
+                f"/search?q={token}&job_id={job_id}&limit=10&annotate_duplicate_hits=true",
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            by_id = {h["page_id"]: h for h in body["results"]}
+            assert p1_id in by_id and p2_id in by_id
+            order = [h["page_id"] for h in body["results"]]
+            assert order.index(p1_id) < order.index(p2_id)
+            assert by_id[p1_id]["is_duplicate_variant"] is False
+            assert by_id[p1_id]["canonical_page_id"] is None
+            assert by_id[p2_id]["is_duplicate_variant"] is True
+            assert by_id[p2_id]["canonical_page_id"] == p1_id
+            assert by_id[p2_id].get("duplicate_explanation")
     finally:
         app.dependency_overrides.clear()

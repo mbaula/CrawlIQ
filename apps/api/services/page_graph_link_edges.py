@@ -59,7 +59,8 @@ def generate_link_edges_for_job(session: Session, crawl_job_id: int) -> int:
             inner,
         )
         .on_conflict_do_nothing(constraint="uq_page_graph_edges_job_src_tgt_type")
+        .returning(PageGraphEdge.__table__.c.id)
     )
 
     result = session.execute(stmt)
-    return int(result.rowcount or 0)
+    return len(result.fetchall())

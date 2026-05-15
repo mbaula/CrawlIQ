@@ -1,4 +1,4 @@
-"""Read-only graph endpoints (Issue 52)."""
+"""Read-only graph endpoints"""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from db.session import get_db
-from schemas.graph import GraphClustersRead, GraphStatsRead, GraphSubgraphRead
+from schemas.graph import GraphClustersRead, GraphQueryRead, GraphStatsRead, GraphSubgraphRead
+from services.page_graph_query import build_graph_query_read
 from services.page_graph_read import (
     build_clusters_read,
     build_graph_stats_read,
@@ -18,6 +20,39 @@ from services.page_graph_read import (
 )
 
 router = APIRouter(tags=["graph"])
+
+
+@router.get("/graph/query", response_model=GraphQueryRead)
+def get_graph_query(
+    q: Annotated[str, Query(description="Search text (tokenized for BM25).")],
+    db: Session = Depends(get_db),
+    job_id: Annotated[int | None, Query(ge=1, description="If set, BM25 pool and graph are scoped to this crawl job.")] = None,
+    max_seed_pages: Annotated[int, Query(ge=1, le=50)] = 10,
+    radius: Annotated[
+        int,
+        Query(ge=0, le=50, description="Maximum hop distance from any seed (undirected BFS)."),
+    ] = 1,
+    max_nodes: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> GraphQueryRead:
+    trimmed = q.strip()
+    if not trimmed:
+        raise HTTPException(
+            status_code=422,
+            detail="Query must contain at least one non-whitespace character.",
+        )
+    if job_id is not None:
+        _require_crawl_job(db, job_id)
+
+    settings = get_settings()
+    return build_graph_query_read(
+        db,
+        raw_query=trimmed,
+        explicit_job_id=job_id,
+        max_seed_pages=max_seed_pages,
+        radius=radius,
+        max_nodes=max_nodes,
+        settings=settings,
+    )
 
 
 def _require_crawl_job(session, job_id: int) -> None:

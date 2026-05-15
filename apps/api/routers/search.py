@@ -13,6 +13,7 @@ from config import get_settings
 from db.session import get_db
 from models.domain import CrawlJob, SearchQuery
 from schemas.search import SearchQueryRead, SearchResponse, SearchResultItem, SearchStatsResponse
+from services.search_duplicate_hits import attach_near_duplicate_of_higher_ranked
 from services.search_graph_rerank import search_indexed_pages_graph_enhanced
 from services.search_pages import search_indexed_pages
 from services.search_related import attach_related_to_search_results
@@ -38,6 +39,12 @@ def search(
         bool,
         Query(description="If true, rerank with BM25 + graph signals (requires job_id)."),
     ] = False,
+    annotate_duplicate_hits: Annotated[
+        bool,
+        Query(
+            description="If true, flag hits that are near-duplicates of an earlier hit (requires job_id).",
+        ),
+    ] = False,
 ) -> SearchResponse:
     trimmed_query = q.strip()
     if not trimmed_query:
@@ -56,6 +63,12 @@ def search(
         raise HTTPException(
             status_code=422,
             detail="job_id is required when graph_enhanced is true",
+        )
+
+    if annotate_duplicate_hits and job_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="job_id is required when annotate_duplicate_hits is true",
         )
 
     if job_id is not None and db.get(CrawlJob, job_id) is None:
@@ -80,12 +93,21 @@ def search(
         )
     for row in result_rows:
         row["related"] = []
+        row.setdefault("is_duplicate_variant", False)
+        row.setdefault("canonical_page_id", None)
+        row.setdefault("duplicate_explanation", None)
     if include_related and job_id is not None:
         attach_related_to_search_results(
             db,
             crawl_job_id=job_id,
             result_rows=result_rows,
             related_limit=related_limit,
+        )
+    if annotate_duplicate_hits and job_id is not None:
+        attach_near_duplicate_of_higher_ranked(
+            db,
+            crawl_job_id=job_id,
+            result_rows=result_rows,
         )
     elapsed_ms = max(0, int((time.perf_counter() - started) * 1000))
 

@@ -10,7 +10,27 @@ from sqlalchemy.orm import Session
 
 from models.domain import Page, PageGraphEdge
 
-from services.search_related_reason import format_related_reason
+from services.graph_edge_reason import format_graph_edge_reason
+
+# Lower index = higher priority when picking one edge between the same page pair.
+_EDGE_TYPE_PRIORITY: dict[str, int] = {
+    "near_duplicate": 0,
+    "link": 1,
+    "url_hierarchy": 2,
+    "content_similarity": 3,
+    "semantic_similarity": 4,
+    "co_ranked": 5,
+    "shared_terms": 6,
+    "manual": 7,
+}
+
+
+def _primary_edge(edges: list[PageGraphEdge]) -> PageGraphEdge:
+    def sort_key(e: PageGraphEdge) -> tuple[int, float, int]:
+        pr = _EDGE_TYPE_PRIORITY.get(e.edge_type, 99)
+        return (pr, -float(e.weight), int(e.id))
+
+    return min(edges, key=sort_key)
 
 
 def attach_related_to_search_results(
@@ -22,10 +42,13 @@ def attach_related_to_search_results(
 ) -> None:
     """
     Mutates each row in ``result_rows`` to add key ``related``: list of dicts with
-    page_id, title, url, edge_type, strength, reason — sorted by strength desc, page_id asc,
-    capped at ``related_limit`` per hit (counting only neighbors with a ``pages`` row).
-    Self-links are ignored. If multiple edges connect the same neighbor, the highest
-    ``weight`` wins; ties break on lower ``page_graph_edges.id``.
+    page_id, title, url, edge_type, strength, reason, also_related_by — sorted by
+    strength desc, page_id asc, capped at ``related_limit`` per hit.
+
+    When several edges connect the same hit and neighbor, the primary row uses the
+    edge type with the best (lowest) priority in ``_EDGE_TYPE_PRIORITY``; ties use
+    higher weight then lower ``page_graph_edges.id``. Other edge types for that pair
+    are listed in ``also_related_by`` (sorted).
     """
     if related_limit <= 0:
         for row in result_rows:
@@ -48,39 +71,27 @@ def attach_related_to_search_results(
     )
     edges = list(session.scalars(stmt).all())
 
-    # (hit_page_id, neighbor_page_id) -> (weight, edge_type, evidence, edge_id)
-    best: dict[tuple[int, int], tuple[float, str, Any, int]] = {}
-
-    def upsert_best(hit: int, neighbor: int, e: PageGraphEdge) -> None:
-        if neighbor == hit:
-            return
-        key = (hit, neighbor)
-        w = float(e.weight)
-        eid = int(e.id)
-        et = e.edge_type
-        ev = e.evidence
-        prev = best.get(key)
-        if prev is None:
-            best[key] = (w, et, ev, eid)
-            return
-        pw, _pet, _pev, peid = prev
-        if w > pw or (w == pw and eid < peid):
-            best[key] = (w, et, ev, eid)
-
+    pair_edges: dict[tuple[int, int], list[PageGraphEdge]] = defaultdict(list)
     for e in edges:
         s, t = int(e.source_page_id), int(e.target_page_id)
-        if s in hit_set:
-            upsert_best(s, t, e)
-        if t in hit_set:
-            upsert_best(t, s, e)
+        if s in hit_set and t != s:
+            pair_edges[(s, t)].append(e)
+        if t in hit_set and s != t:
+            pair_edges[(t, s)].append(e)
 
-    by_hit: dict[int, list[tuple[int, float, str, Any, int]]] = defaultdict(list)
-    for (hit, neigh), (w, et, ev, eid) in best.items():
-        by_hit[hit].append((neigh, w, et, ev, eid))
+    by_hit: dict[int, list[tuple[int, float, str, Any, int, list[str]]]] = defaultdict(list)
+    for (hit, neigh), lst in pair_edges.items():
+        primary = _primary_edge(lst)
+        w = float(primary.weight)
+        et = primary.edge_type
+        ev = primary.evidence
+        eid = int(primary.id)
+        other_types = sorted({e.edge_type for e in lst if int(e.id) != eid})
+        by_hit[hit].append((neigh, w, et, ev, eid, other_types))
 
     all_neighbor_ids: set[int] = set()
     for lst in by_hit.values():
-        for neigh, _w, _et, _ev, _eid in lst:
+        for neigh, _w, _et, _ev, _eid, _o in lst:
             all_neighbor_ids.add(neigh)
 
     page_by_id: dict[int, Page] = {}
@@ -93,13 +104,13 @@ def attach_related_to_search_results(
         candidates = by_hit.get(hit, [])
         candidates.sort(key=lambda x: (-x[1], x[0]))
         related_out: list[dict[str, Any]] = []
-        for neigh, w, et, ev, eid in candidates:
+        for neigh, w, et, ev, _eid, other_types in candidates:
             if len(related_out) >= related_limit:
                 break
             p = page_by_id.get(neigh)
             if p is None:
                 continue
-            reason = format_related_reason(edge_type=et, evidence=ev, weight=w)
+            reason = format_graph_edge_reason(et, ev, w)
             related_out.append(
                 {
                     "page_id": neigh,
@@ -108,6 +119,7 @@ def attach_related_to_search_results(
                     "edge_type": et,
                     "strength": round(w, 6),
                     "reason": reason,
+                    "also_related_by": other_types,
                 },
             )
         row["related"] = related_out

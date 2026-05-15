@@ -1,4 +1,4 @@
-"""Tests for graph-enhanced search reranking (Issue 54)."""
+"""Tests for graph-enhanced search reranking"""
 
 from __future__ import annotations
 

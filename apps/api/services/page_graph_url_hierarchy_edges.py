@@ -99,9 +99,10 @@ def generate_url_hierarchy_edges_for_job(session: Session, crawl_job_id: int) ->
             pg_insert(PageGraphEdge.__table__)
             .values(batch)
             .on_conflict_do_nothing(constraint="uq_page_graph_edges_job_src_tgt_type")
+            .returning(PageGraphEdge.__table__.c.id)
         )
         res = session.execute(stmt)
-        inserted_total += int(res.rowcount or 0)
+        inserted_total += len(res.fetchall())
         batch.clear()
 
     for child_id, child_url in rows:
