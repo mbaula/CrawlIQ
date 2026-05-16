@@ -143,6 +143,59 @@ function nodeDisplayTitle(n: GraphQueryNodeRead): string {
   return safeHostname(n.url);
 }
 
+function requestElementFullscreen(el: HTMLElement): Promise<void> | void {
+  const wk = el as HTMLElement & { webkitRequestFullscreen?: () => void };
+  return el.requestFullscreen?.() ?? wk.webkitRequestFullscreen?.();
+}
+
+function exitDocumentFullscreen(): Promise<void> | void {
+  const doc = document as Document & { webkitExitFullscreen?: () => void };
+  return document.exitFullscreen?.() ?? doc.webkitExitFullscreen?.();
+}
+
+function getFullscreenElement(): Element | null {
+  const doc = document as Document & { webkitFullscreenElement?: Element | null };
+  return document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+}
+
+function IconFullscreenEnter({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7M3 9V3h6M21 15v6h-6" />
+    </svg>
+  );
+}
+
+function IconFullscreenExit({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 8V4h4M20 16v4h-4M16 4h4v4M8 20H4v-4" />
+    </svg>
+  );
+}
+
 function truncateCanvasLabel(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
   if (!text) return "";
   if (ctx.measureText(text).width <= maxWidth) return text;
@@ -385,6 +438,13 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
   const [dims, setDims] = useState({ w: 520, h: 320 });
   const [layoutKey, setLayoutKey] = useState(0);
+  const [graphIsFullscreen, setGraphIsFullscreen] = useState(false);
+  /** Radial seed + force tuning use this, updated only when graph membership changes — not on fullscreen resize. */
+  const [seedLayoutMinDim, setSeedLayoutMinDim] = useState(320);
+  const lastGraphSeedMemberKeyRef = useRef("");
+  /** Saved zoom/pan before entering graph fullscreen — reapplied after exit so the view matches pre-fullscreen. */
+  const cameraBeforeFsRef = useRef<{ k: number; cx: number; cy: number } | null>(null);
+  const pendingGraphCameraRestoreRef = useRef(false);
 
   useEffect(() => {
     const el = document.documentElement;
@@ -410,6 +470,36 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
     return () => {
       document.body.style.overflow = "";
     };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open && getFullscreenElement()) {
+      void Promise.resolve(exitDocumentFullscreen()).catch(() => {});
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const sync = () => {
+      const wrap = wrapRef.current;
+      const nowFs = wrap != null && getFullscreenElement() === wrap;
+      setGraphIsFullscreen(nowFs);
+      if (!nowFs && cameraBeforeFsRef.current != null) {
+        pendingGraphCameraRestoreRef.current = true;
+      }
+    };
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync as EventListener);
+    sync();
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (open) return;
+    cameraBeforeFsRef.current = null;
+    pendingGraphCameraRestoreRef.current = false;
   }, [open]);
 
   useEffect(() => {
@@ -482,11 +572,40 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      const wrap = wrapRef.current;
+      if (wrap && getFullscreenElement() === wrap) {
+        void Promise.resolve(exitDocumentFullscreen()).catch(() => {});
+        return;
+      }
+      onClose();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  const toggleGraphFullscreen = useCallback(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (getFullscreenElement() === el) {
+      void Promise.resolve(exitDocumentFullscreen()).catch(() => {});
+      return;
+    }
+    const fg = fgRef.current;
+    if (fg) {
+      try {
+        const at = fg.centerAt();
+        cameraBeforeFsRef.current = { k: fg.zoom(), cx: at.x, cy: at.y };
+      } catch {
+        cameraBeforeFsRef.current = null;
+      }
+    } else {
+      cameraBeforeFsRef.current = null;
+    }
+    void Promise.resolve(requestElementFullscreen(el)).catch(() => {
+      cameraBeforeFsRef.current = null;
+    });
+  }, []);
 
   const baseNodes = useMemo(() => {
     if (!raw) return [] as GraphQueryNodeRead[];
@@ -588,6 +707,31 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
     return { prunedLinks: pruned, edgeCountBeforePrune: beforeCount };
   }, [curatedNodes, edgesForVisibleInduced, qmIdSet, kEdges]);
 
+  const graphMemberKey = useMemo(() => {
+    if (!curatedNodes.length) return "";
+    const p = curatedNodes.map((n) => n.page_id).join("-");
+    const e = [...prunedLinks]
+      .sort((a, b) => a.edge_id - b.edge_id)
+      .map((l) => l.edge_id)
+      .join("-");
+    return `${layoutKey}|${p}|${e}`;
+  }, [curatedNodes, prunedLinks, layoutKey]);
+
+  useEffect(() => {
+    if (!open) {
+      lastGraphSeedMemberKeyRef.current = "";
+      return;
+    }
+    if (!graphMemberKey) return;
+    if (lastGraphSeedMemberKeyRef.current === graphMemberKey) return;
+    lastGraphSeedMemberKeyRef.current = graphMemberKey;
+    const el = wrapRef.current;
+    const r = el?.getBoundingClientRect();
+    const w = r && r.width >= 200 ? Math.floor(r.width) : dims.w;
+    const h = r && r.height >= 200 ? Math.floor(r.height) : dims.h;
+    setSeedLayoutMinDim(Math.max(200, Math.min(w, h)));
+  }, [open, graphMemberKey, dims.w, dims.h]);
+
   const graphData = useMemo(() => {
     const nodes = curatedNodes.map((n) => ({
       ...n,
@@ -597,7 +741,7 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
     const rn = nodes.filter((n) => n.role === "related_neighbor");
     const cx = 0;
     const cy = 0;
-    const minDim = Math.min(dims.w, dims.h);
+    const minDim = seedLayoutMinDim;
     const r1 = Math.max(60, minDim * 0.16);
     const r2 = Math.max(160, minDim * 0.46);
     const rot = layoutKey * 0.35;
@@ -615,12 +759,12 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
     const rest = nodes.filter((n) => n.role !== "query_match" && n.role !== "related_neighbor");
     rest.forEach((n, i) => {
       const ang = rot + (2 * Math.PI * i) / Math.max(rest.length, 1);
-      const r3 = r2 + Math.min(dims.w, dims.h) * 0.09;
+      const r3 = r2 + minDim * 0.09;
       n.x = cx + r3 * Math.cos(ang) + stab(n.page_id + 91);
       n.y = cy + r3 * Math.sin(ang) + stab(n.page_id + 103);
     });
     return { nodes, links: prunedLinks };
-  }, [curatedNodes, prunedLinks, dims.w, dims.h, layoutKey]);
+  }, [curatedNodes, prunedLinks, layoutKey, seedLayoutMinDim]);
 
   const hoverLinkEndpoints = useMemo(() => {
     if (hoverLinkId == null) return null as Set<number> | null;
@@ -805,7 +949,7 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
     if (loading || !graphData.nodes.length) return;
     const fg = fgRef.current;
     if (!fg) return;
-    const minDim = Math.min(dims.w, dims.h);
+    const minDim = seedLayoutMinDim;
     const innerR = Math.max(60, minDim * 0.16);
     const outerR = Math.max(160, minDim * 0.46);
 
@@ -837,7 +981,7 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
       return 0.3;
     });
     fg.d3Force("radial", radial as never);
-  }, [loading, graphData.nodes.length, graphData.links.length, dims.w, dims.h]);
+  }, [loading, graphData.nodes.length, graphData.links.length, seedLayoutMinDim]);
 
   useEffect(() => {
     if (loading || !open) return;
@@ -846,6 +990,30 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
     const t = window.setTimeout(() => fgRef.current?.zoomToFit(500, 56), 220);
     return () => window.clearTimeout(t);
   }, [loading, open, graphData.nodes.length, graphData.links.length, layoutKey]);
+
+  useEffect(() => {
+    if (!pendingGraphCameraRestoreRef.current) return;
+    const saved = cameraBeforeFsRef.current;
+    if (!saved || loading || !graphData.nodes.length) return;
+    if (typeof document !== "undefined" && document.fullscreenElement != null) return;
+
+    let cancelled = false;
+    const tid = window.setTimeout(() => {
+      if (cancelled) return;
+      const fg = fgRef.current;
+      const wrap = wrapRef.current;
+      const stillSaved = cameraBeforeFsRef.current;
+      if (!fg || !wrap || !stillSaved || getFullscreenElement() === wrap) return;
+      fg.zoom(stillSaved.k);
+      fg.centerAt(stillSaved.cx, stillSaved.cy);
+      cameraBeforeFsRef.current = null;
+      pendingGraphCameraRestoreRef.current = false;
+    }, 96);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+    };
+  }, [dims.w, dims.h, loading, graphData.nodes.length]);
 
   if (!open) return null;
 
@@ -864,7 +1032,7 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="relationship-map-title"
-        className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-xl"
+        className="flex h-[min(92dvh,920px)] max-h-[92dvh] w-full max-w-[min(96vw,1180px)] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-rule px-4 py-3 sm:px-5">
@@ -902,224 +1070,8 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
           </div>
         ) : null}
 
-        {raw?.selected_job ? (
-          <div
-            className="shrink-0 border-b border-accent/20 bg-accent/5 px-4 py-2.5 sm:px-5"
-            title="Which crawl job’s pages and graph edges power this map. Explicit means you chose the job; otherwise the API may auto-pick a corpus."
-          >
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Corpus</p>
-            <p className="mt-1 text-sm text-ink">
-              Crawl job <span className="font-mono">{raw.selected_job.crawl_job_id}</span>
-              <span className="px-2 text-rule">·</span>
-              <span className="font-mono text-xs text-muted">{raw.selected_job.selection_mode}</span>
-            </p>
-            <p className="mt-1 text-xs leading-snug text-muted">{raw.selected_job.message}</p>
-          </div>
-        ) : null}
-
-        <div className="shrink-0 space-y-2 border-b border-rule/70 px-4 py-3 sm:px-5">
-          <p
-            className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted"
-            title="How many neighbor pages and how many edges per node appear in the mini map. Lower values keep the view readable; raise them to explore more of the crawl graph."
-          >
-            Map density
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <label
-              className="flex flex-col gap-1 font-mono text-[11px] text-muted"
-              title="Caps how many related_neighbor pages are shown with the query matches. Query matches are always included up to the API limit."
-            >
-              <span>Related nodes</span>
-              <select
-                value={relatedCap === "all" ? "all" : String(relatedCap)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setRelatedCap(v === "all" ? "all" : (Number(v) as RelatedCapChoice));
-                }}
-                title="Maximum related neighbors in the map (BM25-ranked). All = no cap within API nodes."
-                className="h-9 rounded-lg border border-rule bg-paper px-2 text-xs text-ink"
-              >
-                {RELATED_CAP_OPTIONS.map((n) => (
-                  <option key={n} value={String(n)}>
-                    {n}
-                  </option>
-                ))}
-                <option value="all">All</option>
-              </select>
-            </label>
-            <label
-              className="flex flex-col gap-1 font-mono text-[11px] text-muted"
-              title="After filters, each node keeps at most this many incident edges in the drawn map (greedy, type-prioritized). All = no per-node cap."
-            >
-              <span>Edges per node</span>
-              <select
-                value={edgesPerNode === "all" ? "all" : String(edgesPerNode)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setEdgesPerNode(v === "all" ? "all" : (Number(v) as EdgesPerNodeChoice));
-                }}
-                title="Cap on drawn edges touching each visible node. Lower = cleaner map."
-                className="h-9 rounded-lg border border-rule bg-paper px-2 text-xs text-ink"
-              >
-                {EDGES_PER_NODE_OPTIONS.map((n) => (
-                  <option key={n} value={String(n)}>
-                    {n}
-                  </option>
-                ))}
-                <option value="all">All</option>
-              </select>
-            </label>
-          </div>
-          {raw && raw.nodes.length > 0 && raw.edges.length > 0 ? (
-            <div
-              className="space-y-1 font-mono text-[11px] text-muted"
-              title="Nodes: visible in the map vs returned by the API. Edges: drawn in the map vs total API edges. The second line explains filtering between visible nodes (weight, type toggles, then per-node cap)."
-            >
-              <p>
-                Showing <span className="text-ink">{curatedNodes.length}</span> of{" "}
-                <span className="text-ink">{raw.nodes.length}</span> nodes ·{" "}
-                <span className="text-ink">{prunedLinks.length}</span> of{" "}
-                <span className="text-ink">{raw.edges.length}</span> API edges
-                {raw.edges.length > 0 ? (
-                  <>
-                    {" "}
-                    (
-                    <span className="text-ink">
-                      {((100 * prunedLinks.length) / raw.edges.length).toFixed(
-                        prunedLinks.length < raw.edges.length * 0.1 ? 2 : 1,
-                      )}
-                    </span>
-                    % drawn)
-                  </>
-                ) : null}
-                .
-              </p>
-              {edgeCountBeforePrune !== prunedLinks.length || edgesAfterFilters.length !== edgeCountBeforePrune ? (
-                <p className="text-[10px] leading-snug">
-                  Between visible nodes: <span className="text-ink">{prunedLinks.length}</span> drawn
-                  {edgeCountBeforePrune !== prunedLinks.length ? (
-                    <>
-                      {" "}
-                      of <span className="text-ink">{edgeCountBeforePrune}</span> after filters
-                    </>
-                  ) : null}
-                  {edgesAfterFilters.length !== edgeCountBeforePrune ? (
-                    <>
-                      {" "}
-                      (<span className="text-ink">{edgesAfterFilters.length}</span> pass weight / type filters first)
-                    </>
-                  ) : null}
-                  .
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-          {raw && raw.edges.length > VERY_DENSE_EDGE_THRESHOLD ? (
-            <p
-              className="text-[11px] leading-snug text-muted"
-              title="When the API returns many edges, content_similarity gets an automatic minimum weight so the map stays readable. Link and url_hierarchy edges use only this panel’s min-weight slider and type checkboxes."
-            >
-              Dense graph: a higher <span className="font-mono text-ink">content_similarity</span> floor applies
-              automatically; <span className="font-mono text-ink">link</span> and{" "}
-              <span className="font-mono text-ink">url_hierarchy</span> edges still follow the min-weight slider only.
-              Increase related nodes or edges per node if you need more detail.
-            </p>
-          ) : null}
-        </div>
-
-        <div className="shrink-0 space-y-2 border-b border-rule/70 px-4 py-3 sm:px-5">
-          <p
-            className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted"
-            title="Filter which edges are considered before the map’s per-node edge cap. Combine min weight, edge types, and duplicate visibility."
-          >
-            Filters
-          </p>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <label
-              className="flex min-w-0 max-w-md flex-1 flex-col gap-1 font-mono text-[11px] text-muted"
-              title="Edges with weight below this value are hidden (after edge-type toggles). Applies to all edge types; very dense graphs may also enforce a higher floor for content_similarity only."
-            >
-              <span>
-                Min edge weight <span className="text-ink">{minWeight.toFixed(3)}</span>
-              </span>
-              <input
-                type="range"
-                min={weightExtent.min}
-                max={weightExtent.max}
-                step={(weightExtent.max - weightExtent.min) / 200 || 0.001}
-                value={Math.min(weightExtent.max, Math.max(weightExtent.min, minWeight))}
-                onChange={(e) => {
-                  setMinWeight(Number(e.target.value));
-                }}
-                disabled={!raw?.edges.length}
-                title={`Edge weights in this response range from ${weightExtent.min.toFixed(4)} to ${weightExtent.max.toFixed(4)}. Drag right to show fewer, stronger edges.`}
-                className="w-full accent-accent"
-              />
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <label
-                className="flex cursor-pointer items-center gap-2 font-mono text-[11px] text-ink"
-                title="Duplicate cluster members are hidden from the map and list when checked. Turn off to see duplicate role nodes from the API."
-              >
-                <input
-                  type="checkbox"
-                  checked={hideDuplicateNodes}
-                  onChange={(e) => setHideDuplicateNodes(e.target.checked)}
-                  className="accent-accent"
-                />
-                Hide duplicate nodes
-              </label>
-              <button
-                type="button"
-                onClick={() => applyRingInitialLayout()}
-                title="Re-seed node positions on concentric rings and re-run the force simulation. Use if the graph feels stuck in a clump."
-                className="rounded-lg border border-rule px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-accent"
-              >
-                Reset layout
-              </button>
-              <button
-                type="button"
-                onClick={() => fgRef.current?.zoomToFit(400, 36)}
-                title="Zoom and pan so all visible nodes fit in the graph viewport."
-                className="rounded-lg border border-rule px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-accent"
-              >
-                Fit view
-              </button>
-            </div>
-          </div>
-          {edgeTypes.length > 0 ? (
-            <fieldset
-              className="flex flex-wrap gap-x-4 gap-y-2"
-              title="Turn edge categories on or off. Disabled types are excluded from filtered counts and from the drawn map."
-            >
-              <legend className="sr-only">Edge types</legend>
-              {edgeTypes.map((t) => (
-                <label
-                  key={t}
-                  className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px] text-ink"
-                  title={tooltipForEdgeType(t)}
-                >
-                  <input
-                    type="checkbox"
-                    checked={Boolean(edgeTypeOn[t])}
-                    onChange={(e) => setEdgeTypeOn((prev) => ({ ...prev, [t]: e.target.checked }))}
-                    title={tooltipForEdgeType(t)}
-                    className="accent-accent"
-                  />
-                  <span
-                    className="inline-block h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: edgeColorForType(t, 0.88) }}
-                    aria-hidden
-                  />
-                  {t.replace(/_/g, " ")}
-                </label>
-              ))}
-            </fieldset>
-          ) : null}
-        </div>
-
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col border-b border-rule lg:border-b-0 lg:border-e">
+          <div className="relative flex min-h-[52vh] flex-1 flex-col border-b border-rule lg:min-h-0 lg:border-b-0 lg:border-e">
             {loading ? (
               <div className="absolute inset-0 z-[1] flex items-center justify-center bg-paper/80 font-mono text-xs text-muted">
                 Loading neighborhood…
@@ -1204,9 +1156,25 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
                 ) : null}
                 <div
                   ref={wrapRef}
-                  className="h-[min(36vh,320px)] w-full min-h-[220px] shrink-0 lg:h-[min(44vh,380px)]"
+                  className="relative flex min-h-0 flex-1 flex-col bg-paper [&:fullscreen]:box-border [&:fullscreen]:max-h-none [&:fullscreen]:min-h-0 [&:fullscreen]:h-screen [&:fullscreen]:w-screen [&:fullscreen]:shrink"
                   title="Hover a node or edge to emphasize neighbors. Click a node for page details or an edge for evidence. Scroll to zoom if enabled by the graph control."
                 >
+                  <div className="pointer-events-none absolute right-2 top-2 z-[2] flex justify-end [&_button]:pointer-events-auto">
+                    <button
+                      type="button"
+                      onClick={toggleGraphFullscreen}
+                      title={graphIsFullscreen ? "Leave full screen" : "Full screen graph"}
+                      aria-label={graphIsFullscreen ? "Leave full screen" : "Full screen graph"}
+                      aria-pressed={graphIsFullscreen}
+                      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border text-ink shadow-sm hover:border-accent ${
+                        graphIsFullscreen
+                          ? "border-rule/80 bg-paper/95 backdrop-blur-sm"
+                          : "border-rule/70 bg-paper/90 backdrop-blur-[2px]"
+                      }`}
+                    >
+                      {graphIsFullscreen ? <IconFullscreenExit /> : <IconFullscreenEnter />}
+                    </button>
+                  </div>
                   <ForceGraph2D
                     ref={fgRef}
                     width={dims.w}
@@ -1330,7 +1298,7 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
                   >
                     Pages in this map ({sortedPagesList.length})
                   </p>
-                  <ul className="max-h-[min(28vh,220px)] overflow-y-auto overscroll-contain px-2 py-2 sm:px-3">
+                  <ul className="max-h-[min(22vh,200px)] overflow-y-auto overscroll-contain px-2 py-2 sm:px-3">
                     {sortedPagesList.map((n) => (
                       <li key={n.page_id} className="border-b border-rule/40 last:border-b-0">
                         <button
@@ -1378,34 +1346,237 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
             )}
           </div>
 
-          <aside className="flex w-full shrink-0 flex-col border-t border-rule bg-paper/90 lg:max-w-[min(100%,320px)] lg:w-[320px] lg:border-s lg:border-t-0">
-            <div className="max-h-[min(40vh,320px)] overflow-y-auto overscroll-contain p-4 lg:max-h-none lg:flex-1">
-              <p
-                className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted"
-                title="Summary of the loaded graph: node and edge counts, caps, and dense-graph rules. Click a node or edge on the map to see details here."
-              >
-                Inspector
-              </p>
-              {!selection ? (
+          <aside className="flex w-full max-h-[min(38vh,320px)] shrink-0 flex-col overflow-hidden border-t border-rule bg-paper/90 lg:max-h-none lg:min-h-0 lg:w-[min(100%,360px)] lg:max-w-[380px] lg:shrink-0 lg:self-stretch lg:border-l lg:border-t-0">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              {raw?.selected_job ? (
+                <div
+                  className="border-b border-accent/20 bg-accent/5 px-3 py-2 sm:px-4"
+                  title="Which crawl job's pages and graph edges power this map. Explicit means you chose the job; otherwise the API may auto-pick a corpus."
+                >
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Corpus</p>
+                  <p className="mt-1 text-sm text-ink">
+                    Crawl job <span className="font-mono">{raw.selected_job.crawl_job_id}</span>
+                    <span className="px-2 text-rule">·</span>
+                    <span className="font-mono text-xs text-muted">{raw.selected_job.selection_mode}</span>
+                  </p>
+                  <p className="mt-1 text-xs leading-snug text-muted">{raw.selected_job.message}</p>
+                </div>
+              ) : null}
+
+              <div className="space-y-2 border-b border-rule/70 px-3 py-2.5 sm:px-4">
+                <p
+                  className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted"
+                  title="How many neighbor pages and how many edges per node appear in the mini map. Lower values keep the view readable; raise them to explore more of the crawl graph."
+                >
+                  Map density
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  <label
+                    className="flex flex-col gap-1 font-mono text-[11px] text-muted"
+                    title="Caps how many related_neighbor pages are shown with the query matches. Query matches are always included up to the API limit."
+                  >
+                    <span>Related nodes</span>
+                    <select
+                      value={relatedCap === "all" ? "all" : String(relatedCap)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setRelatedCap(v === "all" ? "all" : (Number(v) as RelatedCapChoice));
+                      }}
+                      title="Maximum related neighbors in the map (BM25-ranked). All = no cap within API nodes."
+                      className="h-9 rounded-lg border border-rule bg-paper px-2 text-xs text-ink"
+                    >
+                      {RELATED_CAP_OPTIONS.map((n) => (
+                        <option key={n} value={String(n)}>
+                          {n}
+                        </option>
+                      ))}
+                      <option value="all">All</option>
+                    </select>
+                  </label>
+                  <label
+                    className="flex flex-col gap-1 font-mono text-[11px] text-muted"
+                    title="After filters, each node keeps at most this many incident edges in the drawn map (greedy, type-prioritized). All = no per-node cap."
+                  >
+                    <span>Edges per node</span>
+                    <select
+                      value={edgesPerNode === "all" ? "all" : String(edgesPerNode)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setEdgesPerNode(v === "all" ? "all" : (Number(v) as EdgesPerNodeChoice));
+                      }}
+                      title="Cap on drawn edges touching each visible node. Lower = cleaner map."
+                      className="h-9 rounded-lg border border-rule bg-paper px-2 text-xs text-ink"
+                    >
+                      {EDGES_PER_NODE_OPTIONS.map((n) => (
+                        <option key={n} value={String(n)}>
+                          {n}
+                        </option>
+                      ))}
+                      <option value="all">All</option>
+                    </select>
+                  </label>
+                </div>
+                {raw && raw.nodes.length > 0 && raw.edges.length > 0 ? (
+                  <div
+                    className="space-y-1 font-mono text-[11px] text-muted"
+                    title="Nodes: visible in the map vs returned by the API. Edges: drawn in the map vs total API edges. The second line explains filtering between visible nodes (weight, type toggles, then per-node cap)."
+                  >
+                    <p>
+                      Showing <span className="text-ink">{curatedNodes.length}</span> of{" "}
+                      <span className="text-ink">{raw.nodes.length}</span> nodes ·{" "}
+                      <span className="text-ink">{prunedLinks.length}</span> of{" "}
+                      <span className="text-ink">{raw.edges.length}</span> API edges
+                      {raw.edges.length > 0 ? (
+                        <>
+                          {" "}
+                          (
+                          <span className="text-ink">
+                            {((100 * prunedLinks.length) / raw.edges.length).toFixed(
+                              prunedLinks.length < raw.edges.length * 0.1 ? 2 : 1,
+                            )}
+                          </span>
+                          % drawn)
+                        </>
+                      ) : null}
+                      .
+                    </p>
+                    {edgeCountBeforePrune !== prunedLinks.length || edgesAfterFilters.length !== edgeCountBeforePrune ? (
+                      <p className="text-[10px] leading-snug">
+                        Between visible nodes: <span className="text-ink">{prunedLinks.length}</span> drawn
+                        {edgeCountBeforePrune !== prunedLinks.length ? (
+                          <>
+                            {" "}
+                            of <span className="text-ink">{edgeCountBeforePrune}</span> after filters
+                          </>
+                        ) : null}
+                        {edgesAfterFilters.length !== edgeCountBeforePrune ? (
+                          <>
+                            {" "}
+                            (<span className="text-ink">{edgesAfterFilters.length}</span> pass weight / type filters first)
+                          </>
+                        ) : null}
+                        .
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {raw && raw.edges.length > VERY_DENSE_EDGE_THRESHOLD ? (
+                  <p
+                    className="text-[11px] leading-snug text-muted"
+                    title="When the API returns many edges, content_similarity gets an automatic minimum weight so the map stays readable. Link and url_hierarchy edges use only this panel's min-weight slider and type checkboxes."
+                  >
+                    Dense graph: a higher <span className="font-mono text-ink">content_similarity</span> floor applies
+                    automatically; <span className="font-mono text-ink">link</span> and{" "}
+                    <span className="font-mono text-ink">url_hierarchy</span> edges still follow the min-weight slider only.
+                    Increase related nodes or edges per node if you need more detail.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="space-y-3 border-b border-rule/70 px-3 py-2.5 sm:px-4">
+                <p
+                  className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted"
+                  title="Filter which edges are considered before the map's per-node edge cap. Combine min weight, edge types, and duplicate visibility."
+                >
+                  Filters
+                </p>
+
+                <label
+                  className="flex flex-col gap-1.5 font-mono text-[11px] text-muted"
+                  title="Edges with weight below this value are hidden (after edge-type toggles). Applies to all edge types; very dense graphs may also enforce a higher floor for content_similarity only."
+                >
+                  <span>
+                    Min edge weight <span className="text-ink">{minWeight.toFixed(3)}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={weightExtent.min}
+                    max={weightExtent.max}
+                    step={(weightExtent.max - weightExtent.min) / 200 || 0.001}
+                    value={Math.min(weightExtent.max, Math.max(weightExtent.min, minWeight))}
+                    onChange={(e) => {
+                      setMinWeight(Number(e.target.value));
+                    }}
+                    disabled={!raw?.edges.length}
+                    title={`Edge weights in this response range from ${weightExtent.min.toFixed(4)} to ${weightExtent.max.toFixed(4)}. Drag right to show fewer, stronger edges.`}
+                    className="h-1.5 w-full accent-accent"
+                  />
+                </label>
+
+                {edgeTypes.length > 0 ? (
+                  <fieldset
+                    className="flex flex-wrap gap-x-4 gap-y-1.5"
+                    title="Turn edge categories on or off. Disabled types are excluded from filtered counts and from the drawn map."
+                  >
+                    <legend className="sr-only">Edge types</legend>
+                    {edgeTypes.map((t) => (
+                      <label
+                        key={t}
+                        className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px] text-ink"
+                        title={tooltipForEdgeType(t)}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(edgeTypeOn[t])}
+                          onChange={(e) => setEdgeTypeOn((prev) => ({ ...prev, [t]: e.target.checked }))}
+                          title={tooltipForEdgeType(t)}
+                          className="accent-accent"
+                        />
+                        <span
+                          className="inline-block h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: edgeColorForType(t, 0.88) }}
+                          aria-hidden
+                        />
+                        {t.replace(/_/g, " ")}
+                      </label>
+                    ))}
+                  </fieldset>
+                ) : null}
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                  <label
+                    className="flex cursor-pointer items-center gap-2 font-mono text-[11px] text-ink"
+                    title="Duplicate cluster members are hidden from the map and list when checked. Turn off to see duplicate role nodes from the API."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={hideDuplicateNodes}
+                      onChange={(e) => setHideDuplicateNodes(e.target.checked)}
+                      className="accent-accent"
+                    />
+                    Hide duplicate nodes
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyRingInitialLayout()}
+                      title="Re-seed node positions on concentric rings and re-run the force simulation. Use if the graph feels stuck in a clump."
+                      className="rounded-lg border border-rule px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-accent"
+                    >
+                      Reset layout
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fgRef.current?.zoomToFit(400, 36)}
+                      title="Zoom and pan so all visible nodes fit in the graph viewport."
+                      className="rounded-lg border border-rule px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-accent"
+                    >
+                      Fit view
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-3 py-3 sm:px-4">
+                <p
+                  className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted"
+                  title="Summary of the loaded graph: node and edge counts, caps, and dense-graph rules. Click a node or edge on the map to see details here."
+                >
+                  Inspector
+                </p>
+                {!selection ? (
                 graphSummary ? (
                   <div className="mt-2 space-y-3 text-xs">
-                    <div>
-                      <p className="font-mono text-[10px] uppercase tracking-wider text-muted">Query</p>
-                      <p className="mt-0.5 break-words text-sm text-ink">{graphSummary.query}</p>
-                    </div>
-                    <div>
-                      <p className="font-mono text-[10px] uppercase tracking-wider text-muted">Corpus</p>
-                      {graphSummary.selectedJob ? (
-                        <p className="mt-0.5 leading-snug text-muted">
-                          Job <span className="font-mono text-ink">{graphSummary.selectedJob.crawl_job_id}</span> (
-                          {graphSummary.selectedJob.selection_mode}) — {graphSummary.selectedJob.message}
-                        </p>
-                      ) : (
-                        <p className="mt-0.5 text-muted">
-                          No pinned job in this request; the API auto-selected a corpus when applicable.
-                        </p>
-                      )}
-                    </div>
                     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 font-mono text-[11px]">
                       <dt className="text-muted">Nodes (API / visible)</dt>
                       <dd className="text-ink">
@@ -1520,6 +1691,7 @@ export function RelationshipMapModal({ open, onClose, q, jobId }: Props) {
                   </details>
                 </div>
               )}
+              </div>
             </div>
           </aside>
         </div>

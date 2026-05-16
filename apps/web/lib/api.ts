@@ -350,6 +350,78 @@ export type GraphQueryRead = {
   edges: GraphQueryEdgeRead[];
 };
 
+export type GraphHealthSummaryRead = {
+  page_count: number;
+  edge_count: number;
+  metrics_count: number;
+  cluster_row_count: number;
+  distinct_cluster_ids: number;
+  orphan_count: number;
+  duplicate_cluster_count: number;
+  orphan_detection_warning: string | null;
+};
+
+export type GraphHealthPageRow = {
+  page_id: number;
+  title: string | null;
+  url: string;
+  pagerank?: number | null;
+  in_degree?: number | null;
+  out_degree?: number | null;
+  link_in_count?: number | null;
+};
+
+export type GraphHealthClusterRow = {
+  cluster_id: number;
+  member_count: number;
+  representative_page_id: number;
+  representative_title: string | null;
+  representative_url: string;
+  cluster_label?: string | null;
+  sample_urls: string[];
+};
+
+export type GraphHealthDupNeighborRead = {
+  page_id: number;
+  title: string | null;
+  url: string;
+  weight: number;
+  evidence: unknown | null;
+};
+
+export type GraphHealthDuplicateClusterRead = {
+  canonical_page_id: number;
+  canonical_title: string | null;
+  canonical_url: string;
+  duplicate_count: number;
+  duplicates: GraphHealthDupNeighborRead[];
+};
+
+export type GraphHealthRead = {
+  job_id: number | null;
+  message?: string | null;
+  summary: GraphHealthSummaryRead | null;
+  top_pagerank_pages: GraphHealthPageRow[];
+  hub_pages: GraphHealthPageRow[];
+  authority_pages: GraphHealthPageRow[];
+  orphan_pages: GraphHealthPageRow[];
+  largest_clusters: GraphHealthClusterRow[];
+  small_clusters: GraphHealthClusterRow[];
+  duplicate_clusters: GraphHealthDuplicateClusterRead[];
+  most_linked_pages: GraphHealthPageRow[];
+};
+
+export async function fetchGraphHealth(params: { job_id?: number }): Promise<GraphHealthRead> {
+  const url = new URL(`${getApiBaseUrl()}/graph/health`);
+  if (typeof params.job_id === "number" && params.job_id > 0) {
+    url.searchParams.set("job_id", String(params.job_id));
+  }
+  return await fetchJsonOrThrow<GraphHealthRead>(url.toString(), {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export async function fetchGraphQuery(params: {
   q: string;
   job_id?: number;

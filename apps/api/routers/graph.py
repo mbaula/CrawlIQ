@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from config import get_settings
 from db.session import get_db
 from schemas.graph import GraphClustersRead, GraphQueryRead, GraphStatsRead, GraphSubgraphRead
+from schemas.graph_health import GraphHealthRead
+from services.page_graph_health import build_graph_health_placeholder, build_graph_health_read
 from services.page_graph_query import build_graph_query_read
 from services.page_graph_read import (
     build_clusters_read,
@@ -20,6 +22,18 @@ from services.page_graph_read import (
 )
 
 router = APIRouter(tags=["graph"])
+
+
+@router.get("/graph/health", response_model=GraphHealthRead)
+def get_graph_health(
+    job_id: Annotated[int | None, Query(ge=1, description="Crawl job id; omit to get a placeholder response for the UI selector.")] = None,
+    db: Session = Depends(get_db),
+) -> GraphHealthRead:
+    if job_id is None:
+        return build_graph_health_placeholder()
+    if not crawl_job_exists(db, job_id):
+        raise HTTPException(status_code=404, detail="crawl job not found")
+    return build_graph_health_read(db, crawl_job_id=job_id)
 
 
 @router.get("/graph/query", response_model=GraphQueryRead)
