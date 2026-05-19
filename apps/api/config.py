@@ -66,6 +66,10 @@ class Settings(BaseSettings):
         le=50_000,
         description="Max pages for which betweenness centrality is computed in graph metrics.",
     )
+    allow_search_query_log_reset: bool = Field(
+        default=False,
+        description="When true, POST /search/stats/reset deletes all rows in search_queries (for benchmarks).",
+    )
 
     @model_validator(mode="after")
     def _graph_rerank_seed_vs_max(self) -> "Settings":

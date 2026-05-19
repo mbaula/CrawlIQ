@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 import math
 import re
 from collections import Counter, defaultdict
@@ -91,28 +92,28 @@ def _bm25_term_score(
     return idf * (numerator / denominator)
 
 
-def _compute_scoped_document_frequency(
+def _compute_scoped_document_frequencies_batch(
     session: Session,
-    term_id: int,
+    term_ids: list[int],
     crawl_job_id: int,
-) -> int:
-    """
-    Count how many indexed pages (token_count > 0) in the given job contain this term.
-    """
+) -> dict[int, int]:
+    """Per-term document frequency within a crawl job (indexed pages with token_count > 0)."""
+    if not term_ids:
+        return {}
     stmt = (
-        select(func.count(InvertedIndex.page_id.distinct()))
+        select(InvertedIndex.term_id, func.count(InvertedIndex.page_id.distinct()))
         .join(Page, Page.id == InvertedIndex.page_id)
         .where(
             and_(
-                InvertedIndex.term_id == term_id,
+                InvertedIndex.term_id.in_(term_ids),
                 Page.crawl_job_id == crawl_job_id,
                 Page.indexed_at.isnot(None),
                 Page.token_count > 0,
             ),
         )
+        .group_by(InvertedIndex.term_id)
     )
-    result = session.scalar(stmt)
-    return int(result or 0)
+    return {int(tid): int(cnt or 0) for tid, cnt in session.execute(stmt)}
 
 
 def _build_snippet(
@@ -196,8 +197,9 @@ def execute_search(
         session,
         raw_query=raw_query,
         crawl_job_id=crawl_job_id,
+        max_ranked=result_limit,
     )
-    return ranked_full[:result_limit], corpus_stats
+    return ranked_full, corpus_stats
 
 
 def execute_search_ranked_pages(
@@ -226,6 +228,15 @@ def execute_search_ranked_pages(
     ).all()
     term_by_key: dict[str, Term] = {row.term: row for row in term_rows}
 
+    term_ids_for_df = [t.id for t in term_rows]
+    scoped_df_by_term_id: dict[int, int] = {}
+    if crawl_job_id is not None and term_ids_for_df:
+        scoped_df_by_term_id = _compute_scoped_document_frequencies_batch(
+            session,
+            term_ids_for_df,
+            crawl_job_id,
+        )
+
     page_score_by_id: dict[int, float] = defaultdict(float)
     matched_terms_by_page: dict[int, set[str]] = defaultdict(set)
 
@@ -235,11 +246,7 @@ def execute_search_ranked_pages(
             continue
 
         if crawl_job_id is not None:
-            document_frequency = _compute_scoped_document_frequency(
-                session,
-                term_row.id,
-                crawl_job_id,
-            )
+            document_frequency = scoped_df_by_term_id.get(term_row.id, 0)
         else:
             document_frequency = int(term_row.document_frequency or 0)
 
@@ -273,19 +280,27 @@ def execute_search_ranked_pages(
             page_score_by_id[page_id] += bm25_contribution * float(query_weight)
             matched_terms_by_page[page_id].add(query_term)
 
-    ranked_full = sorted(
-        (
-            _RankedPage(
-                page_id=pid,
-                score=score,
-                matched_terms=frozenset(matched_terms_by_page.get(pid, set())),
-            )
-            for pid, score in page_score_by_id.items()
-        ),
-        key=lambda row: (-row.score, row.page_id),
-    )
+    total_candidates = len(page_score_by_id)
+    if total_candidates == 0:
+        return [], corpus_stats
+
+    n_keep = total_candidates
     if max_ranked is not None:
-        ranked_full = ranked_full[: max(0, max_ranked)]
+        n_keep = min(max(0, max_ranked), total_candidates)
+
+    ranked_iter = (
+        _RankedPage(
+            page_id=pid,
+            score=score,
+            matched_terms=frozenset(matched_terms_by_page.get(pid, set())),
+        )
+        for pid, score in page_score_by_id.items()
+    )
+    ranked_full = heapq.nlargest(
+        n_keep,
+        ranked_iter,
+        key=lambda row: (row.score, -row.page_id),
+    )
 
     return ranked_full, corpus_stats
 

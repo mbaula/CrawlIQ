@@ -5,14 +5,20 @@ from __future__ import annotations
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from config import get_settings
-from db.session import get_db
+from db.session import get_db, get_session_factory
 from models.domain import CrawlJob, SearchQuery
-from schemas.search import SearchQueryRead, SearchResponse, SearchResultItem, SearchStatsResponse
+from schemas.search import (
+    SearchQueryLogResetResponse,
+    SearchQueryRead,
+    SearchResponse,
+    SearchResultItem,
+    SearchStatsResponse,
+)
 from services.search_duplicate_hits import attach_near_duplicate_of_higher_ranked
 from services.search_graph_rerank import search_indexed_pages_graph_enhanced
 from services.search_pages import search_indexed_pages
@@ -21,9 +27,19 @@ from services.search_related import attach_related_to_search_results
 router = APIRouter(tags=["search"])
 
 
+def _persist_search_query_log(query: str, result_count: int, latency_ms: int) -> None:
+    SessionLocal = get_session_factory()
+    with SessionLocal() as session:
+        session.add(
+            SearchQuery(query=query, result_count=result_count, latency_ms=latency_ms),
+        )
+        session.commit()
+
+
 @router.get("/search", response_model=SearchResponse)
 def search(
     q: Annotated[str, Query(min_length=1, description="Search text (will be tokenized).")],
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     job_id: Annotated[int | None, Query(description="If set, only pages from this crawl job.")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -114,14 +130,12 @@ def search(
     results = [SearchResultItem(**row) for row in result_rows]
     result_count = len(results)
 
-    db.add(
-        SearchQuery(
-            query=trimmed_query,
-            result_count=result_count,
-            latency_ms=elapsed_ms,
-        ),
+    background_tasks.add_task(
+        _persist_search_query_log,
+        trimmed_query,
+        result_count,
+        elapsed_ms,
     )
-    db.commit()
 
     return SearchResponse(
         query=trimmed_query,
@@ -146,3 +160,22 @@ def search_stats(
     rows = list(db.scalars(stmt).all())
     recent = [SearchQueryRead.model_validate(r) for r in rows]
     return SearchStatsResponse(recent=recent)
+
+
+@router.post("/search/stats/reset", response_model=SearchQueryLogResetResponse)
+def reset_search_query_log(db: Session = Depends(get_db)) -> SearchQueryLogResetResponse:
+    """
+    Clear ``search_queries`` so aggregate stats (e.g. p95 latency) restart fresh.
+
+    Disabled unless ``allow_search_query_log_reset`` is enabled in settings.
+    """
+    settings = get_settings()
+    if not settings.allow_search_query_log_reset:
+        raise HTTPException(
+            status_code=403,
+            detail="Set allow_search_query_log_reset=true in environment to enable clearing search query history.",
+        )
+    result = db.execute(delete(SearchQuery))
+    deleted = int(result.rowcount or 0)
+    db.commit()
+    return SearchQueryLogResetResponse(deleted=deleted)

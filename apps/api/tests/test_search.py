@@ -62,6 +62,12 @@ def test_search_annotate_duplicate_hits_requires_job_id_422(client_mock_search_d
     assert r.status_code == 422
 
 
+def test_search_stats_reset_returns_403_when_disabled(client_mock_search_db) -> None:
+    client, _ = client_mock_search_db
+    response = client.post("/search/stats/reset")
+    assert response.status_code == 403
+
+
 def test_search_stats_returns_rows(client_mock_search_db) -> None:
     client, mock_session = client_mock_search_db
     row = SearchQuery(

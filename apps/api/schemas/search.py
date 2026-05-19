@@ -94,3 +94,9 @@ class SearchStatsResponse(BaseModel):
     """Response for ``GET /search/stats``."""
 
     recent: list[SearchQueryRead]
+
+
+class SearchQueryLogResetResponse(BaseModel):
+    """Response for ``POST /search/stats/reset``."""
+
+    deleted: int = Field(ge=0, description="Number of ``search_queries`` rows removed.")

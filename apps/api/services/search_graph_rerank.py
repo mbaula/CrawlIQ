@@ -127,16 +127,18 @@ def search_indexed_pages_graph_enhanced(
         key = (a, b)
         undirected_w[key] = max(undirected_w.get(key, 0.0), float(w))
 
+    neighbor_adj: dict[int, list[tuple[int, float]]] = defaultdict(list)
+    for (a, b), w in undirected_w.items():
+        neighbor_adj[a].append((b, w))
+        neighbor_adj[b].append((a, w))
+
     neighbor_boost_raw: dict[int, float] = {pid: 0.0 for pid in c}
     for sid in seed_bm25:
         sbm = max(seed_bm25[sid], 1e-9)
-        for pid in c:
-            if pid == sid:
+        for pid, w in neighbor_adj.get(sid, []):
+            if pid == sid or pid not in c:
                 continue
-            a, b = (pid, sid) if pid < sid else (sid, pid)
-            w = undirected_w.get((a, b))
-            if w is not None:
-                neighbor_boost_raw[pid] += w * math.log1p(sbm)
+            neighbor_boost_raw[pid] += w * math.log1p(sbm)
 
     dup_raw: dict[int, float] = defaultdict(float)
     stmt_nd = select(PageGraphEdge.source_page_id, PageGraphEdge.target_page_id, PageGraphEdge.weight).where(

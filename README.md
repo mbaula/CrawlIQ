@@ -1,8 +1,69 @@
 # CrawlIQ
 
-CrawlIQ is a Dockerized mini search engine: you supply a seed URL, run a bounded crawl, and watch pages move through fetch, extract, index, and search. The stack is **Next.js** (dashboard), **FastAPI** (API), **Python workers** (crawl + index), **PostgreSQL**, **Redis**, and **RQ** for jobs.
+**CrawlIQ** is a Dockerized mini search engine: you supply a seed URL, run a bounded crawl, and pages move through fetch, extract, index, and search. It was made with **Next.js** (dashboard), **FastAPI** (API), **Python workers** (crawl + index), **PostgreSQL**, **Redis**, and **RQ** for jobs.
 
-This repository is a monorepo:
+## Features
+
+- **Bounded crawls** — seed URL, max pages/depth, same-domain filtering, robots.txt awareness, per-domain rate limiting
+- **Job queue** — crawl work enqueued via Redis and processed by Python workers (RQ)
+- **Indexing & search** — HTML fetch/parse, tokenization, BM25 ranking, snippets
+- **Graph-enhanced search** — optional reranking using page-graph neighbors and duplicate signals (`graph_enhanced=true`)
+- **Page graph** — link edges, URL hierarchy, content similarity, near-duplicate detection, and graph metrics (e.g. betweenness) per crawl job
+- **Dashboard** — start and monitor crawl jobs, run search, explore graph health and subgraphs
+- **Deterministic demo** — bundled `demo-site/` for reproducible local demos without hitting arbitrary external domains
+
+## Quick start
+
+From the repo root:
+
+```bash
+docker compose up --build
+```
+
+Migrations run automatically when the API container starts (`alembic upgrade head`).
+
+| Service | URL |
+| --- | --- |
+| Web UI | http://localhost:3000 |
+| API | http://localhost:8000 |
+| API docs (Swagger) | http://localhost:8000/docs |
+| Demo site | http://localhost:8081 |
+
+## Screenshots
+
+![Dashboard](img/preview-dashboard.png)
+
+![Search](img/preview-search.png)
+
+![Graph](img/preview-graph.png)
+
+![Jobs](img/preview-jobs.png)
+
+## API reference
+
+With the stack running, interactive OpenAPI docs are at **http://localhost:8000/docs**
+
+## Tests
+
+From `apps/api`:
+
+**Unit tests** (no Postgres required):
+
+```bash
+python -m pytest -m "not integration"
+```
+
+**Integration tests** (Postgres + migrations; marked `@pytest.mark.integration`):
+
+```bash
+# PowerShell
+$env:CRAWLIQ_TEST_DATABASE_URL = "postgresql://crawliq:crawliq@localhost:5432/crawliq_test"
+python -m pytest -m integration
+```
+
+Create the test database and run Alembic migrations before integration tests.
+
+## Monorepo layout
 
 | Path | Role |
 |------|------|
@@ -10,71 +71,12 @@ This repository is a monorepo:
 | `apps/api` | FastAPI + Pydantic (HTTP API) |
 | `apps/worker` | Python crawler, indexer, and queue consumers |
 | `infra` | Docker Compose, Postgres/Redis config (filled in as the build progresses) |
-| `docs` | Architecture notes: [glossary](docs/glossary.md), [formulas](docs/formulas.md), [page graph](docs/page-graph-design.md) |
-
-## Page graph (Sprint 9)
-
-After migrations through **`0007_page_graph_tables`**, populate per-job graph data without recrawling: **`POST /crawl-jobs/{id}/graph/link-edges`**, **`.../url-hierarchy-edges`**, **`.../content-similarity-edges`**, **`.../near-duplicate-edges`**, and **`.../graph/compute-metrics`**. Read slices with **`GET /graph/subgraph`**, **`GET /pages/{page_id}/neighbors`**, **`GET /pages/{page_id}/graph`**, **`GET /graph/stats`**, **`GET /graph/clusters`** (all require `job_id`). See **`docs/page-graph-design.md`** and **`article.md`** (Sprint 9).
+| `demo-site/` | Static site for deterministic crawl demos |
 
 ## Prerequisites
 
-- Docker and Docker Compose (recommended for local runs after Compose is added)
-- Node.js 20+ (for `apps/web`)
-- Python 3.11+ (for `apps/api` and `apps/worker`)
+- Docker and Docker Compose (recommended for local runs)
+- Node.js 20+ (for `apps/web` without Docker)
+- Python 3.11+ (for `apps/api` and `apps/worker` without Docker)
 
-## Running tests
-
-### API unit tests (fast, no Postgres required)
-
-From `apps/api`:
-
-```bash
-python -m pytest -m "not integration"
-```
-
-### API integration tests (requires Postgres + migrations)
-
-Integration tests are marked with `@pytest.mark.integration` and require a real Postgres database URL in:
-
-```text
-CRAWLIQ_TEST_DATABASE_URL
-```
-
-Example:
-
-```bash
-$env:CRAWLIQ_TEST_DATABASE_URL = "postgresql://crawliq:crawliq@localhost:${POSTGRES_PORT:-5432}/crawliq_test"
-python -m pytest -m integration
-```
-
-Notes:
-- If you already have a local Postgres running on `5432`, start the Docker Postgres on a different port:
-  - `POSTGRES_PORT=5433 docker compose up -d postgres`
-  - then use `localhost:5433` in `CRAWLIQ_TEST_DATABASE_URL`
-- Create the database and apply Alembic migrations before running integration tests.
-- The suite uses `httpx.MockTransport` for deterministic HTTP behavior; no external calls are required.
-
-## Demo site (deterministic crawl target)
-
-This repo includes a small static website at `demo-site/` so you can demo crawling + indexing + search without hitting random external domains.
-
-### Run the demo site
-
-```bash
-docker compose up -d demo-site
-```
-
-It will be available at:
-
-```text
-http://localhost:8081/
-```
-
-### Suggested demo crawl
-
-- **Seed URL**: `http://demo-site/` (from inside Docker) or `http://localhost:8081/` (from your host)
-- **Max pages**: `25`
-- **Max depth**: `3`
-- **Same-domain only**: `true`
-
-If you run the full stack with Docker Compose, the worker crawls from inside the network, so using `http://demo-site/` is the most reliable seed.
+Optional API settings: see `apps/api/.env.example`.
