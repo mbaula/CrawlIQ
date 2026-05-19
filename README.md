@@ -2,6 +2,14 @@
 
 **CrawlIQ** is a Dockerized mini search engine: you supply a seed URL, run a bounded crawl, and pages move through fetch, extract, index, and search. It was made with **Next.js** (dashboard), **FastAPI** (API), **Python workers** (crawl + index), **PostgreSQL**, **Redis**, and **RQ** for jobs.
 
+![Dashboard](img/preview-dashboard.png)
+
+![Search](img/preview-search.png)
+
+![Graph](img/preview-graph.png)
+
+![Jobs](img/preview-jobs.png)
+
 ## Features
 
 - **Bounded crawls** — seed URL, max pages/depth, same-domain filtering, robots.txt awareness, per-domain rate limiting
@@ -28,16 +36,6 @@ Migrations run automatically when the API container starts (`alembic upgrade hea
 | API | http://localhost:8000 |
 | API docs (Swagger) | http://localhost:8000/docs |
 | Demo site | http://localhost:8081 |
-
-## Screenshots
-
-![Dashboard](img/preview-dashboard.png)
-
-![Search](img/preview-search.png)
-
-![Graph](img/preview-graph.png)
-
-![Jobs](img/preview-jobs.png)
 
 ## API reference
 
